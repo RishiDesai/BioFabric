@@ -50,6 +50,7 @@ import org.systemsbiology.biofabric.util.BTProgressMonitor;
 import org.systemsbiology.biofabric.util.CharacterEntityMapper;
 import org.systemsbiology.biofabric.util.DataUtil;
 import org.systemsbiology.biofabric.util.Indenter;
+import org.systemsbiology.biofabric.util.LoopReporter;
 import org.systemsbiology.biofabric.util.MinMax;
 import org.systemsbiology.biofabric.util.NID;
 import org.systemsbiology.biofabric.util.UiUtil;
@@ -88,7 +89,9 @@ public class BioFabricNetwork {
                          NODE_CLUSTER_LAYOUT,
                          CONTROL_TOP_LAYOUT,
                          HIER_DAG_LAYOUT,
+                         MULTI_MODE_DAG_LAYOUT,
                          WORLD_BANK_LAYOUT,
+                         SET_LAYOUT,
                          GROUP_PER_NETWORK_CHANGE,
                         };
                                                 
@@ -177,10 +180,7 @@ public class BioFabricNetwork {
   ** Constructor
   */
 
-  public BioFabricNetwork(BuildData bd, 
-  		                    BTProgressMonitor monitor, 
-                          double startFrac, 
-                          double endFrac) throws AsynchExitRequestException {
+  public BioFabricNetwork(BuildData bd, BTProgressMonitor monitor) throws AsynchExitRequestException {
   	nodeIDGenerator_ = new UniqueLabeller();
   	layoutMode_ = LayoutMode.UNINITIALIZED_MODE;
     BuildMode mode = bd.getMode();
@@ -196,6 +196,8 @@ public class BioFabricNetwork {
       case NODE_CLUSTER_LAYOUT:
       case CONTROL_TOP_LAYOUT: 
       case HIER_DAG_LAYOUT:
+      case MULTI_MODE_DAG_LAYOUT:
+      case SET_LAYOUT:
       case WORLD_BANK_LAYOUT:
         RelayoutBuildData rbd = (RelayoutBuildData)bd;
         normalCols_ = new ColumnAssign();
@@ -207,9 +209,7 @@ public class BioFabricNetwork {
         linkGrouping_ = new ArrayList<String>(rbd.linkGroups);
         colGen_ = rbd.colGen;
         layoutMode_ = rbd.layoutMode;
-        System.out.println("BFNCO " + System.currentTimeMillis());
-        relayoutNetwork(rbd, monitor, startFrac, endFrac);
-        System.out.println("BFNCO2 " + System.currentTimeMillis());
+        relayoutNetwork(rbd, monitor);
         break;
       case BUILD_FOR_SUBMODEL:
         SelectBuildData sbd = (SelectBuildData)bd;
@@ -244,9 +244,7 @@ public class BioFabricNetwork {
         linkGrouping_ = new ArrayList<String>();
         layoutMode_ = LayoutMode.UNINITIALIZED_MODE;
         colGen_ = obd.colGen;
-        System.out.println("PROL " + System.currentTimeMillis());
-        processLinks(obd, monitor, startFrac, endFrac);
-        System.out.println("POOL " + System.currentTimeMillis());
+        processLinks(obd, monitor);
         break;
       default:
         throw new IllegalArgumentException();
@@ -508,43 +506,38 @@ public class BioFabricNetwork {
   ** Process a link set
   */
 
-  private void processLinks(RelayoutBuildData rbd, 
-  		                      BTProgressMonitor monitor, 
-                            double startFrac, 
-                            double endFrac) throws AsynchExitRequestException {
+  private void processLinks(RelayoutBuildData rbd, BTProgressMonitor monitor) throws AsynchExitRequestException {
     //
     // Note the allLinks Set has pruned out duplicates and synonymous non-directional links
     //
-       System.out.println("PROL1 " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
-    List<NID.WithName> targetIDs =  (new DefaultLayout()).doNodeLayout(rbd, null);
+
+    List<NID.WithName> targetIDs =  (new DefaultLayout()).doNodeLayout(rbd, null, monitor);
     
     //
     // Now have the ordered list of targets we are going to display.
     //
-    System.out.println("PROL2 " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
-    fillNodesFromOrder(targetIDs, rbd.colGen, rbd.clustAssign);
+
+    fillNodesFromOrder(targetIDs, rbd.colGen, rbd.clustAssign, monitor);
 
     //
     // This now assigns the link to its column.  Note that we order them
     // so that the shortest vertical link is drawn first!
     //
     
-    System.out.println("PROL3 " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
-    (new DefaultEdgeLayout()).layoutEdges(rbd, monitor, startFrac, endFrac);
-    specifiedLinkToColumn(rbd.colGen, rbd.linkOrder, false, monitor, startFrac, endFrac);
+    (new DefaultEdgeLayout()).layoutEdges(rbd, monitor);
+    specifiedLinkToColumn(rbd.colGen, rbd.linkOrder, false, monitor);
 
     //
     // Determine the start & end of each target row needed to handle the incoming
     // and outgoing links:
     //
-System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
-    trimTargetRows();
+
+    trimTargetRows(monitor);
         
     //
     // For the lone nodes, they are assigned into the last column:
     //
-    System.out.println("PROL5 " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
-    loneNodesToLastColumn(rbd.loneNodeIDs);
+    loneNodesToLastColumn(rbd.loneNodeIDs, monitor);
     return;
   }
   
@@ -553,9 +546,7 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
   ** Relayout the network!
   */
   
-  private void relayoutNetwork(RelayoutBuildData rbd, BTProgressMonitor monitor, 
-                               double startFrac, 
-                               double endFrac) throws AsynchExitRequestException {
+  private void relayoutNetwork(RelayoutBuildData rbd, BTProgressMonitor monitor) throws AsynchExitRequestException {
     BuildMode mode = rbd.getMode();
     installLinkGroups(rbd.linkGroups);
     setLayoutMode(rbd.layoutMode);
@@ -563,11 +554,13 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
                                  (mode == BuildMode.DEFAULT_LAYOUT) ||
                                  (mode == BuildMode.CONTROL_TOP_LAYOUT) ||
                                  (mode == BuildMode.HIER_DAG_LAYOUT) ||
+                                 (mode == BuildMode.MULTI_MODE_DAG_LAYOUT) ||
+                                 (mode == BuildMode.SET_LAYOUT) ||
                                  (mode == BuildMode.WORLD_BANK_LAYOUT) ||
                                  (mode == BuildMode.NODE_CLUSTER_LAYOUT) || 
                                  (mode == BuildMode.CLUSTERED_LAYOUT) || 
                                  (mode == BuildMode.REORDER_LAYOUT); 
-      System.out.println("PreSID " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
+
     List<NID.WithName> targetIDs;
     if (specifiedNodeOrder) {
       targetIDs = specifiedIDOrder(rbd.allNodeIDs, rbd.nodeOrder);
@@ -575,18 +568,12 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
       targetIDs = rbd.existingIDOrder;
     }
    
-    if (monitor != null) {
-      if (!monitor.updateProgress((int)(startFrac * 100.0))) {
-        throw new AsynchExitRequestException();
-      }
-    }
-   
     //
     // Now have the ordered list of targets we are going to display.
     // Build target->row maps and the inverse:
     //
-    System.out.println("PreFNFO " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
-    fillNodesFromOrder(targetIDs, rbd.colGen, rbd.clustAssign);
+
+    fillNodesFromOrder(targetIDs, rbd.colGen, rbd.clustAssign, monitor);
 
     //
     // Ordering of links:
@@ -601,44 +588,30 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
           rbd.nodeOrder.put(targID, Integer.valueOf(i));
         }
       }
-        System.out.println("LOE " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
-      (new DefaultEdgeLayout()).layoutEdges(rbd, monitor, startFrac, endFrac);
+      (new DefaultEdgeLayout()).layoutEdges(rbd, monitor);
     }
 
     //
     // This now assigns the link to its column, based on user specification
     //
-    
-    if (monitor != null) {
-      if (!monitor.updateProgress((int)(((endFrac + startFrac) / 2.0) * 100.0))) {
-        throw new AsynchExitRequestException();
-      }
-    }
-    System.out.println("SLC " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
+  
     specifiedLinkToColumn(rbd.colGen, rbd.linkOrder, ((mode == BuildMode.LINK_ATTRIB_LAYOUT) || 
     		                                              (mode == BuildMode.NODE_CLUSTER_LAYOUT) ||
     		                                              (mode == BuildMode.GROUP_PER_NODE_CHANGE) ||
-    		                                              (mode == BuildMode.GROUP_PER_NETWORK_CHANGE)),
-    		                  monitor, (endFrac + startFrac) / 2.0, endFrac);
+    		                                              (mode == BuildMode.GROUP_PER_NETWORK_CHANGE)), monitor);
       
     //
     // Determine the start & end of each target row needed to handle the incoming
     // and outgoing links:
     //
-    System.out.println("TTR " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
-    trimTargetRows();
+
+    trimTargetRows(monitor);
         
     //
     // For the lone nodes, they are assigned into the last column:
     //
-     System.out.println("LNLC " + System.currentTimeMillis() + " " + Runtime.getRuntime().freeMemory());
-    loneNodesToLastColumn(rbd.loneNodeIDs);
 
-    if (monitor != null) {
-      if (!monitor.updateProgress((int)(endFrac * 100.0))) {
-        throw new AsynchExitRequestException();
-      }
-    }
+    loneNodesToLastColumn(rbd.loneNodeIDs, monitor);
 
     return;
   }
@@ -699,49 +672,31 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
 
   private void specifiedLinkToColumn(FabricColorGenerator colGen, 
   		                               SortedMap<Integer, FabricLink> linkOrder, 
-  		                               boolean userSpec, BTProgressMonitor monitor, 
-                                     double startFrac, 
-                                     double endFrac) throws AsynchExitRequestException {
+  		                               boolean userSpec, BTProgressMonitor monitor) throws AsynchExitRequestException {
      
     normalCols_.columnCount = 0;
     shadowCols_.columnCount = 0;
     int numColors = colGen.getNumColors();
     Iterator<Integer> frkit = linkOrder.keySet().iterator();
+   
     
-    double inc = (endFrac - startFrac) / ((linkOrder.size() == 0) ? 1 : linkOrder.size());
-    double currProg = startFrac;
+    LoopReporter lr = new LoopReporter(linkOrder.size(), 20, monitor, 0.0, 1.0, "progress.linkToColumn");
     
     while (frkit.hasNext()) {
       Integer nextCol = frkit.next();
+      lr.report();
       FabricLink nextLink = linkOrder.get(nextCol);
       Integer[] colCounts = addLinkDef(nextLink, numColors, normalCols_.columnCount, shadowCols_.columnCount, colGen);
       shadowCols_.columnCount = colCounts[0].intValue();
       if (colCounts[1] != null) {
         normalCols_.columnCount = colCounts[1].intValue();
       }
-      
-	    if (monitor != null) {
-	    	currProg += inc;
-	      if (!monitor.updateProgress((int)(currProg * 100.0))) {
-	        throw new AsynchExitRequestException();
-	      }
-	    }    
     }
-    
-    // WJRL 3/7/17 Commented out temporarily so I can check efficiency of other code....
+    lr.finish();
    
-    System.out.println("This operation is O(e^2)");
-    setDrainZonesWithMultipleLabels(true);
-    System.out.println("SDZML 0.5");
-    setDrainZonesWithMultipleLabels(false);
-    System.out.println("SDZML done");
+    setDrainZonesWithMultipleLabels(true, monitor, 0.0, 0.5);
+    setDrainZonesWithMultipleLabels(false, monitor, 0.5, 1.0);
  
-    if (monitor != null) {
-      if (!monitor.updateProgress((int)(endFrac * 100.0))) {
-        throw new AsynchExitRequestException();
-      }
-      System.out.println(currProg);
-    }           
     return;
   }
   
@@ -750,16 +705,28 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
   ** 
    */
   
-  private void setDrainZonesWithMultipleLabels(boolean forShadow) {
+  private void setDrainZonesWithMultipleLabels(boolean forShadow,
+  		                                         BTProgressMonitor monitor, 
+					                                     double startFrac, 
+					                                     double endFrac) throws AsynchExitRequestException {
     
     List<LinkInfo> links = getLinkDefList(forShadow);
+    
+    if (links.isEmpty()) {
+    	return;
+    }
+    
+    int size = links.size() + nodeDefs_.size();
+    
+    LoopReporter lr = new LoopReporter(size, 20, monitor, startFrac, endFrac, "progress.findingDrainZones");
+
     Map<NID.WithName, List<DrainZone>> nodeToZones = new TreeMap<NID.WithName, List<DrainZone>>();
 
     LinkInfo current = links.get(0);  // these keep track of start of zone and zone's node
     int startIdx = 0;
     
     for (int index = 0; index <= links.size(); index++) {
-      
+      lr.report();
       if (index == links.size()) {
         
         int endIdx = links.size() - 1;
@@ -786,16 +753,16 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
         
         startIdx = index;           // update the start index
         current = links.get(index); // update the current node whose zone we're calculating
-      }
-        
+      }    
     }
 
-    for (Map.Entry<NID.WithName, List<DrainZone>> entry : nodeToZones.entrySet()) {
-      
+    for (Map.Entry<NID.WithName, List<DrainZone>> entry : nodeToZones.entrySet()) {     
       NodeInfo ni = getNodeDefinition(entry.getKey());
+      lr.report();
       ni.setDrainZones(entry.getValue(), forShadow);
     }
     
+    lr.finish();
   }
   
   /***************************************************************************
@@ -836,101 +803,23 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
       return getNodeIDForRow(li.topRow());
     }
   }
-  
-  /***************************************************************************
-   **
-  ** Helper
-  */
-
-  private void updateContigs(NID.WithName nodeID, HashMap<NID.WithName, SortedMap<Integer, MinMax>> runsPerNode, 
-                             Integer lastCol, Integer col) {
-    int colVal = col.intValue();
-    SortedMap<Integer, MinMax> runs = runsPerNode.get(nodeID);
-    if (runs == null) {
-      runs = new TreeMap<Integer, MinMax>();
-      runsPerNode.put(nodeID, runs);        
-    }
-    MinMax currRun = runs.get(lastCol);
-    if (currRun == null) {
-      currRun = new MinMax(colVal);
-      runs.put(col, currRun);        
-    } else {
-      currRun.update(colVal);
-      runs.remove(lastCol);
-      runs.put(col, currRun);
-    }
-    return;
-  }
- 
-  /***************************************************************************
-  ** 
-  ** When user specified link order, things could get totally wild.  Set drain zones
-  ** by leftmost largest contiguous set of links.
-  */
-
-  private void runsToDrain(HashMap<NID.WithName, SortedMap<Integer, MinMax>> runsPerNode, boolean forShadow) {  
-    Iterator<NID.WithName> rpnit = runsPerNode.keySet().iterator();
-    while (rpnit.hasNext()) {  
-      NID.WithName nodeID = rpnit.next();      
-      SortedMap<Integer, MinMax> runs = runsPerNode.get(nodeID);
-      MinMax maxRun = null;
-      int maxSize = Integer.MIN_VALUE;
-      Iterator<MinMax> rit = runs.values().iterator();
-      while (rit.hasNext()) {  
-        MinMax aRun = rit.next();
-        int runLen = aRun.max - aRun.min + 1;
-        if (runLen > maxSize) {
-          maxSize = runLen;
-          maxRun = aRun;
-        } else if ((runLen == 1) && (maxSize == 1)) {
-          maxRun = aRun;  // move this to the end if no contig run
-        }
-      }
-      if (maxRun != null) {
-        NodeInfo nit = nodeDefs_.get(nodeID);
-        nit.addDrainZone(new DrainZone(maxRun.clone(), forShadow));
-      }
-    }
-    return;
-  }
-  
-  /***************************************************************************
-  ** 
-  ** When user specified link order, things could get totally wild.  Set drain zones
-  ** by leftmost largest contiguous set of links.
-  */
-
-  private void setDrainZonesByContig(boolean withShadows) {
-    
-    HashMap<NID.WithName, SortedMap<Integer, MinMax>> runsPerNode = new HashMap<NID.WithName, SortedMap<Integer, MinMax>>();
-         
-    Iterator<Integer> olit = getOrderedLinkInfo(withShadows);
-    Integer lastCol = Integer.valueOf(-1);
-    while (olit.hasNext()) {
-      Integer col = olit.next();
-      LinkInfo linf = getLinkDefinition(col, withShadows);
-      NID.WithName topNodeID = rowToTargID_.get(Integer.valueOf(linf.topRow()));
-      updateContigs(topNodeID, runsPerNode, lastCol, col);
-      if (withShadows && linf.isShadow()) {
-        NID.WithName botNodeID = rowToTargID_.get(Integer.valueOf(linf.bottomRow()));     
-        updateContigs(botNodeID, runsPerNode, lastCol, col);
-      }
-      lastCol = col;
-    } 
-    runsToDrain(runsPerNode, withShadows);
-    return;
-  }
    
   /***************************************************************************
   **
   ** Dump the network using XML
   */
   
-  public void writeXML(PrintWriter out, Indenter ind) {    
+  public void writeXML(PrintWriter out, Indenter ind, BTProgressMonitor monitor, boolean forCache) throws AsynchExitRequestException {    
     ind.indent();
+    
+    int numNodes = rowToTargID_.size();
+    int numLinks = fullLinkDefs_.size();
+    int numLm = nonShadowedLinkMap_.size();
+      
     out.println("<BioFabric>");
     ind.up();
-    
+    String label = (forCache) ? "progress.cachingCurrentNetwork" : "progress.writingFile";
+    LoopReporter lr = new LoopReporter(numNodes + numLinks + numLm, 20, monitor, 0.0, 1.0, label);   
     colGen_.writeXML(out, ind);
     
     //
@@ -949,6 +838,7 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
     ind.up();
     while (r2tit.hasNext()) {
       Integer row = r2tit.next();
+      lr.report();
       NID.WithName nodeID = rowToTargID_.get(row);
       NodeInfo ni = getNodeDefinition(nodeID);
       ni.writeXML(out, ind, row.intValue());
@@ -978,9 +868,9 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
     Iterator<Integer> nsit = nonShadowedLinkMap_.keySet().iterator();
     while (nsit.hasNext()) {
       Integer key = nsit.next();
+      lr.report();
       inverse.put(nonShadowedLinkMap_.get(key), key);
-    }
-    
+    }    
     
     Iterator<Integer> ldit = fullLinkDefs_.keySet().iterator();
     ind.indent();
@@ -990,6 +880,7 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
       Integer col = ldit.next();
       LinkInfo li = getLinkDefinition(col, true);
       FabricLink link = li.getLink();
+      lr.report();
       ind.indent();
       out.print("<link srcID=\"");
       out.print(link.getSrcID().getNID().getInternal());
@@ -1017,10 +908,11 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
       out.print(li.getColorKey());
       out.println("\" />");
     }
+    lr.finish();
     ind.down().indent();
     out.println("</links>");
     ind.down().indent();
-    out.println("</BioFabric>");
+    out.println("</BioFabric>"); 
     return;
   }
   
@@ -1759,7 +1651,8 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
   */
 
   private void fillNodesFromOrder(List<NID.WithName> targetIDs, 
-  		                            FabricColorGenerator colGen, Map<NID.WithName, String> clustAssign) {
+  		                            FabricColorGenerator colGen, Map<NID.WithName, String> clustAssign,
+  		                            BTProgressMonitor monitor) throws AsynchExitRequestException {
     //
     // Now have the ordered list of targets we are going to display.
     // Build target->row maps and the inverse:
@@ -1767,10 +1660,13 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
     
     int numColors = colGen.getNumColors();
 
+    LoopReporter lr = new LoopReporter(targetIDs.size(), 20, monitor, 0.0, 1.0, "progress.nodeInfo");
+  
     int currRow = 0;
     Iterator<NID.WithName> trit = targetIDs.iterator();
     while (trit.hasNext()) {
       NID.WithName targetID = trit.next();
+      lr.report();
       Integer rowObj = Integer.valueOf(currRow);
       rowToTargID_.put(rowObj, targetID);
       String colorKey = colGen.getGeneColor(currRow % numColors);
@@ -1803,10 +1699,13 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
   ** and outgoing links:
   */
 
-  private void trimTargetRows() {
-    Iterator<Integer> fldit = fullLinkDefs_.keySet().iterator();
+  private void trimTargetRows(BTProgressMonitor monitor) throws AsynchExitRequestException {
+  	  	
+  	LoopReporter lr = new LoopReporter(fullLinkDefs_.size(), 20, monitor, 0.0, 0.5, "progress.trimTargetRows1");
+  	Iterator<Integer> fldit = fullLinkDefs_.keySet().iterator();
     while (fldit.hasNext()) {
       Integer colNum = fldit.next();
+      lr.report();
       LinkInfo li = fullLinkDefs_.get(colNum);
       shadowCols_.columnToSource.put(colNum, li.getSource());
       shadowCols_.columnToTarget.put(colNum, li.getTarget());
@@ -1815,9 +1714,13 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
       srcNI.updateMinMaxCol(colNum.intValue(), true);
       trgNI.updateMinMaxCol(colNum.intValue(), true);
     }
+    lr.finish();
+    
+    LoopReporter lr2 = new LoopReporter(nonShadowedLinkMap_.size(), 20, monitor, 0.5, 1.0, "progress.trimTargetRows2");
     Iterator<Integer> nslit = nonShadowedLinkMap_.keySet().iterator();
     while (nslit.hasNext()) {
       Integer colNum = nslit.next();
+      lr2.report();
       Integer mappedCol = nonShadowedLinkMap_.get(colNum);
       LinkInfo li = fullLinkDefs_.get(mappedCol);
       normalCols_.columnToSource.put(colNum, li.getSource());
@@ -1827,6 +1730,7 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
       srcNI.updateMinMaxCol(colNum.intValue(), false);
       trgNI.updateMinMaxCol(colNum.intValue(), false);
     }
+    lr.finish();
     return;
   }
   
@@ -1835,14 +1739,20 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
   ** For the lone nodes, they are assigned into the last column:
   */
 
-  private void loneNodesToLastColumn(Set<NID.WithName> loneNodeIDs) {
+  private void loneNodesToLastColumn(Set<NID.WithName> loneNodeIDs,
+  		                               BTProgressMonitor monitor) throws AsynchExitRequestException {
+  	
+  	LoopReporter lr = new LoopReporter(loneNodeIDs.size(), 20, monitor, 0.0, 1.0, "progress.loneNodes");
+  	
     Iterator<NID.WithName> lnit = loneNodeIDs.iterator();
     while (lnit.hasNext()) {
       NID.WithName loneID = lnit.next();
+      lr.report();
       NodeInfo loneNI = nodeDefs_.get(loneID);     
       loneNI.updateMinMaxCol(normalCols_.columnCount - 1, false);
       loneNI.updateMinMaxCol(shadowCols_.columnCount - 1, true);
-    }    
+    } 
+    lr.finish();
     return;
   }
   
@@ -1851,12 +1761,14 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
   ** Pretty icky hack:
   */
 
-  private Set<NID.WithName> getLoneNodes() {
+  private Set<NID.WithName> getLoneNodes(BTProgressMonitor monitor) throws AsynchExitRequestException { 
     HashSet<NID.WithName> retval = new HashSet<NID.WithName>();
+    LoopReporter lr = new LoopReporter(nodeDefs_.size(), 20, monitor, 0.0, 1.0, "progress.findingLoneNodes");   
     Iterator<NID.WithName> lnit = nodeDefs_.keySet().iterator();
     boolean checkDone = false;
     while (lnit.hasNext()) {
       NID.WithName loneID = lnit.next();
+      lr.report();
       NodeInfo loneNI = nodeDefs_.get(loneID);
       int min = loneNI.getColRange(true).min;
       int max = loneNI.getColRange(true).max;
@@ -1871,11 +1783,10 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
         }
         retval.add(loneID);
       }    
-    }    
+    }
+    lr.finish();
     return (retval);
   }
- 
- 
  
   /***************************************************************************
   **
@@ -2343,9 +2254,9 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
     public Set<NID.WithName> allNodeIDs;
     public Map<NID.WithName, String> clustAssign;
     public LayoutMode layoutMode;
-    public UniqueLabeller idGen; 
+    public UniqueLabeller idGen;
     
-    public RelayoutBuildData(BioFabricNetwork fullNet, BuildMode mode) {
+    public RelayoutBuildData(BioFabricNetwork fullNet, BuildMode mode, BTProgressMonitor monitor) throws AsynchExitRequestException {
       super(mode);
       this.bfn = fullNet;
       this.allLinks = fullNet.getAllLinks(true);
@@ -2354,7 +2265,7 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
       this.existingIDOrder = fullNet.existingIDOrder();
       this.linkOrder = null;
       this.linkGroups = fullNet.linkGrouping_;
-      this.loneNodeIDs = fullNet.getLoneNodes();
+      this.loneNodeIDs = fullNet.getLoneNodes(monitor);
       this.allNodeIDs = fullNet.nodeDefs_.keySet();
       this.clustAssign = (fullNet.nodeClustersAssigned()) ? fullNet.nodeClusterAssigment() : null;
       this.layoutMode = fullNet.getLayoutMode();
@@ -2377,7 +2288,7 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
       this.loneNodeIDs = loneNodeIDs;
       this.allNodeIDs = null;
       this.layoutMode = LayoutMode.PER_NODE_MODE;   
-      this.idGen = idGen; 
+      this.idGen = idGen;
     } 
 
     public Map<String, Set<NID.WithName>> genNormNameToID() {
@@ -2498,13 +2409,19 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
   ** Extract relations
   */
 
-  public static SortedMap<FabricLink.AugRelation, Boolean> extractRelations(List<FabricLink> allLinks) {
+  public static void extractRelations(List<FabricLink> allLinks, 
+  		                                SortedMap<FabricLink.AugRelation, Boolean> relMap, 
+  		                                BTProgressMonitor monitor) 
+  		                                  throws AsynchExitRequestException {
     HashSet<FabricLink> flipSet = new HashSet<FabricLink>();
     HashSet<FabricLink.AugRelation> flipRels = new HashSet<FabricLink.AugRelation>();
-    HashSet<FabricLink.AugRelation> rels = new HashSet<FabricLink.AugRelation>(); 
+    HashSet<FabricLink.AugRelation> rels = new HashSet<FabricLink.AugRelation>();
+    int size = allLinks.size();
+    LoopReporter lr = new LoopReporter(size, 20, monitor, 0.0, 1.0, "progress.analyzingRelations");
     Iterator<FabricLink> alit = allLinks.iterator();
     while (alit.hasNext()) {
       FabricLink nextLink = alit.next();
+      lr.report();
       FabricLink.AugRelation relation = nextLink.getAugRelation();
       if (!nextLink.isFeedback()) {  // Autofeedback not flippable
         FabricLink flipLink = nextLink.flipped();
@@ -2522,7 +2439,6 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
     // separate links running in opposite directions!
     //
         
-    TreeMap<FabricLink.AugRelation, Boolean> relMap = new TreeMap<FabricLink.AugRelation, Boolean>();
     Boolean noDir = new Boolean(false);
     Boolean haveDir = new Boolean(true);
     Iterator<FabricLink.AugRelation> rit = rels.iterator();
@@ -2530,24 +2446,8 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
       FabricLink.AugRelation rel = rit.next();
       relMap.put(rel, (flipRels.contains(rel)) ? haveDir : noDir);
     }    
-    return (relMap);
-  }
-  
-  /***************************************************************************
-  ** 
-  ** Process a link set that has not had directionality established
-  */
-
-  public static void assignDirections(List<FabricLink> allLinks, Map<FabricLink.AugRelation, Boolean> relMap) {    
-    Iterator<FabricLink> alit = allLinks.iterator();
-    while (alit.hasNext()) {
-      FabricLink nextLink = alit.next();
-      FabricLink.AugRelation rel = nextLink.getAugRelation();
-      Boolean isDir = relMap.get(rel);
-      nextLink.installDirection(isDir);
-    }
     return;
-  }  
+  }
   
   /***************************************************************************
   ** 
@@ -2568,6 +2468,30 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
     return (retval);
   }  
   
+  
+  /***************************************************************************
+  ** 
+  ** Process a link set that has not had directionality established
+  */
+
+  public static void assignDirections(List<FabricLink> allLinks, 
+  		                                Map<FabricLink.AugRelation, Boolean> relMap,
+  		                                BTProgressMonitor monitor) throws AsynchExitRequestException { 
+     
+	  int numLink = allLinks.size();
+	  LoopReporter lr = new LoopReporter(numLink, 20, monitor, 0.0, 1.0, "progress.installDirections");
+	 
+    Iterator<FabricLink> alit = allLinks.iterator();
+    while (alit.hasNext()) {
+      FabricLink nextLink = alit.next();
+      lr.report();
+      FabricLink.AugRelation rel = nextLink.getAugRelation();
+      Boolean isDir = relMap.get(rel);
+      nextLink.installDirection(isDir);
+    }
+    return;
+  }
+
   /***************************************************************************
   ** 
   ** This culls a set of links to remove non-directional synonymous and
@@ -2575,11 +2499,17 @@ System.out.println("PROL4 " + System.currentTimeMillis() + " " + Runtime.getRunt
   ** and added to the allLinks list. 
   */
 
-  public static void preprocessLinks(List<FabricLink> allLinks, Set<FabricLink> retval, Set<FabricLink> culled) {
+  public static void preprocessLinks(List<FabricLink> allLinks, Set<FabricLink> retval, Set<FabricLink> culled,
+  		                               BTProgressMonitor monitor) 
+  		                              	 throws AsynchExitRequestException {
   	FabricLink.FabLinkComparator flc = new FabricLink.FabLinkComparator();
+  	int numLink = allLinks.size();
+	  LoopReporter lr = new LoopReporter(numLink, 20, monitor, 0.0, 1.0, "progress.cullingAndFlipping");
+  	
     Iterator<FabricLink> alit = allLinks.iterator();
     while (alit.hasNext()) {
       FabricLink nextLink = alit.next();
+      lr.report();
       if (retval.contains(nextLink)) {
         culled.add(nextLink);
       } else if (!nextLink.isDirected()) {
