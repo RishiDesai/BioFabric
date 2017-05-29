@@ -57,7 +57,6 @@ public class BackgroundWorkerClient {
   private boolean allowCancels_;
   private boolean cancelRequested_;
   private JLabel cancellingMessage_;
-  private JLabel progressMessage_;
   private FixedJButton cancelButton_;
   private boolean isHeadless_;
 
@@ -145,19 +144,18 @@ public class BackgroundWorkerClient {
     } else {
       progressDialog_.setSize(600, 500);
     }
-    progressMessage_ = new JLabel(rMan.getString(waitMsg_), JLabel.CENTER);
+    JLabel label = new JLabel(rMan.getString(waitMsg_), JLabel.CENTER);
     Container cp = progressDialog_.getContentPane();
     cp.setLayout(new GridBagLayout());
     GridBagConstraints gbc = new GridBagConstraints();
     int rowNum = 0;
     UiUtil.gbcSet(gbc, 0, rowNum, 5, 4, UiUtil.BO, 0, 0, 5, 5, 5, 5, UiUtil.CEN, 1.0, 1.0);
     rowNum += 4;
-    cp.add(progressMessage_, gbc);
+    cp.add(label, gbc);
     
     if (allowCancels_) {
       progressDialog_.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
       progressDialog_.addWindowListener(new WindowAdapter() {
-      	@Override
         public void windowClosing(WindowEvent e) {
           try {
             boolean cancelPending = cancelRequested_;
@@ -204,7 +202,6 @@ public class BackgroundWorkerClient {
     progressBar_.setValue(0);
     progressBar_.setStringPainted(true);
     progressBar_.setIndeterminate(true);
-  
     UiUtil.gbcSet(gbc, 0, rowNum++, 5, 1, UiUtil.BO, 0, 0, 20, 20, 20, 20, UiUtil.CEN, 1.0, 0.0);    
     cp.add(progressBar_, gbc);
     
@@ -216,7 +213,7 @@ public class BackgroundWorkerClient {
     return;
   }
 
-  public boolean updateRankings(SortedMap<Integer, Double> vals) {
+  public boolean updateRankings(SortedMap vals) {
     if (chart_ != null) {
       chart_.setProgress(vals);
       chart_.repaint();
@@ -229,32 +226,6 @@ public class BackgroundWorkerClient {
       progressBar_.setValue(percent);
       progressBar_.setIndeterminate(false);
     }
-    return (!cancelRequested_);
-  }
-  
-  public boolean setToIndeterminate() {
-    if (progressBar_ != null) {
-      progressBar_.setIndeterminate(true);
-    }
-    UiUtil.fixMePrintout("No this should be separate. Proof of concept");
-    if (cancelButton_ != null) {
-    	cancelButton_.setEnabled(false); 	
-    }
-    
-    return (!cancelRequested_);
-  }
-
-  public boolean updateProgressAndPhase(int percent, String message) {
-    if (progressBar_ != null) {
-      progressBar_.setValue(percent);
-      progressBar_.setIndeterminate(false);
-    }
-    if (progressMessage_ != null) {
-      progressMessage_.setText(ResourceManager.getManager().getString(message));
-      progressMessage_.invalidate();
-      progressDialog_.validate();
-    }
-    
     return (!cancelRequested_);
   }
   
@@ -281,6 +252,11 @@ public class BackgroundWorkerClient {
     if (memErr != null) {
       ExceptionHandler.getHandler().displayOutOfMemory(memErr);
     }
+    if (remoteEx != null) {
+      if (!owner_.handleRemoteException(remoteEx)) {
+        ExceptionHandler.getHandler().displayException(remoteEx);
+      }
+    }      
     try {
       UiUtil.fixMePrintout("NO! If IO ERROR, DO NOT CLOSE, RIGHT??");
       if (support_ != null) {
@@ -290,11 +266,7 @@ public class BackgroundWorkerClient {
         progressDialog_.setVisible(false);
         progressDialog_.dispose();
       }
-      if (remoteEx != null) {
-        if (!owner_.handleRemoteException(remoteEx)) {
-          ExceptionHandler.getHandler().displayException(remoteEx);
-        }
-      }
+      UiUtil.fixMePrintout("NO! If IO ERROR, Early result (String) different from late result (Buffered image)");
       owner_.cleanUpPreEnable(result);      
       if (suw_ != null) {
         suw_.reenableControls();
@@ -304,7 +276,6 @@ public class BackgroundWorkerClient {
     } catch (Exception ex) {
       ExceptionHandler.getHandler().displayException(ex);
     }
-  
     return;
   }
   
@@ -341,5 +312,4 @@ public class BackgroundWorkerClient {
     progressDialog_.validate();
     cancelRequested_ = true;
   }
-}
-
+} 

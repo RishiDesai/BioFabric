@@ -42,7 +42,6 @@ import org.systemsbiology.biofabric.util.BTProgressMonitor;
 import org.systemsbiology.biofabric.util.ChoiceContent;
 import org.systemsbiology.biofabric.util.DataUtil;
 import org.systemsbiology.biofabric.util.DoubMinMax;
-import org.systemsbiology.biofabric.util.LoopReporter;
 import org.systemsbiology.biofabric.util.MinMax;
 import org.systemsbiology.biofabric.util.NID;
 import org.systemsbiology.biofabric.util.ResourceManager;
@@ -100,11 +99,13 @@ public class NodeSimilarityLayout {
 
   public void doReorderLayout(BioFabricNetwork.RelayoutBuildData rbd, 
                               NodeSimilarityLayout.CRParams params,
-                              BTProgressMonitor monitor) throws AsynchExitRequestException { 
+                              BTProgressMonitor monitor, 
+                              double startFrac, 
+                              double endFrac) throws AsynchExitRequestException { 
 
   	BioFabricNetwork bfn = rbd.bfn;
   	HashMap<NID.WithName, Integer> targToRow = new HashMap<NID.WithName, Integer>();
-    SortedMap<Integer, SortedSet<Integer>>  connVecs = getConnectionVectors(rbd, targToRow, monitor);
+    SortedMap<Integer, SortedSet<Integer>>  connVecs = getConnectionVectors(rbd, targToRow);
    
     NodeSimilarityLayout.ResortParams rp = (NodeSimilarityLayout.ResortParams)params;
     
@@ -114,8 +115,8 @@ public class NodeSimilarityLayout {
       ordered.add(Integer.valueOf(i));
     }
     
-    double currStart = 0.0;
-    double inc = 1.0 / rp.passCount;
+    double currStart = startFrac;
+    double inc = (endFrac - startFrac) / rp.passCount;
     double currEnd = currStart + inc;
     
     TreeMap<Integer, Double> rankings = new TreeMap<Integer, Double>();
@@ -154,9 +155,10 @@ public class NodeSimilarityLayout {
 
   public void doClusteredLayout(BioFabricNetwork.RelayoutBuildData rbd, 
                                 NodeSimilarityLayout.CRParams params,
-                                BTProgressMonitor monitor) throws AsynchExitRequestException {   
+                                BTProgressMonitor monitor, 
+                                double startFrac, double endFrac) throws AsynchExitRequestException {   
  
-    List<Integer> ordered = doClusteredLayoutOrder(rbd, params, monitor);
+    List<Integer> ordered = doClusteredLayoutOrder(rbd, params, monitor, startFrac, endFrac);
     Map<NID.WithName, Integer> orderedNames = convertOrderToMap(rbd.bfn, ordered);
     rbd.setNodeOrder(orderedNames);
     return;
@@ -169,34 +171,37 @@ public class NodeSimilarityLayout {
 
   public List<Integer> doClusteredLayoutOrder(BioFabricNetwork.RelayoutBuildData rbd, 
 							                                NodeSimilarityLayout.CRParams params,
-							                                BTProgressMonitor monitor) throws AsynchExitRequestException {   
+							                                BTProgressMonitor monitor, 
+							                                double startFrac, double endFrac) throws AsynchExitRequestException {   
  
+  	//BioFabricNetwork bfn = rbd.bfn;
     NodeSimilarityLayout.ClusterParams cp = (NodeSimilarityLayout.ClusterParams)params;
     HashMap<NID.WithName, Integer> targToRow = new HashMap<NID.WithName, Integer>();
-    SortedMap<Integer, SortedSet<Integer>> connVecs = getConnectionVectors(rbd, targToRow, monitor);
+    SortedMap<Integer, SortedSet<Integer>> connVecs = getConnectionVectors(rbd, targToRow);
 
     TreeMap<Double, SortedSet<Link>> dists = new TreeMap<Double, SortedSet<Link>>(Collections.reverseOrder());
     HashMap<Integer, Integer> degMag = new HashMap<Integer, Integer>();
     
     Integer highestDegree = (cp.distanceMethod == NodeSimilarityLayout.ClusterParams.COSINES) ?
-                             getCosines(connVecs, dists, degMag, rbd, targToRow, monitor) :
-                             getJaccard(connVecs, dists, degMag, rbd, targToRow, monitor);
+                             getCosines(connVecs, dists, degMag, rbd, targToRow) :
+                             getJaccard(connVecs, dists, degMag, rbd, targToRow);
     
     ArrayList<Link> linkTrace = new ArrayList<Link>();
     ArrayList<Integer> jumpLog = new ArrayList<Integer>();
     
     
-    LoopReporter lr = new LoopReporter(targToRow.size(), 20, monitor, 0.0, 1.0, "progress.preparingToChain"); 
     HashMap<Integer, NID.WithName> rowToTarg = new HashMap<Integer, NID.WithName>();
     for (NID.WithName targ : targToRow.keySet()) {
-    	lr.report();
     	rowToTarg.put(targToRow.get(targ), targ);
     }
-    lr.finish();
-    
     List<Integer> ordered = orderByDistanceChained(rowToTarg, highestDegree, dists, 
-                                                   degMag, linkTrace, cp.chainLength, 
-                                                   cp.tolerance, jumpLog, monitor);
+                                                        degMag, linkTrace, cp.chainLength, 
+                                                        cp.tolerance, jumpLog, monitor, startFrac, endFrac);
+    
+    
+    
+    
+    
     return (ordered);
   }
 
@@ -212,8 +217,7 @@ public class NodeSimilarityLayout {
   */
 
   private SortedMap<Integer, SortedSet<Integer>> getConnectionVectors(BioFabricNetwork.RelayoutBuildData rbd, 
-  		                                                                Map<NID.WithName, Integer> targToRow,
-  		                                                                BTProgressMonitor monitor) throws AsynchExitRequestException {
+  		                                                                Map<NID.WithName, Integer> targToRow) { 
     
     Iterator<NID.WithName> rtit = rbd.existingIDOrder.iterator();
     int count = 0;
@@ -222,19 +226,17 @@ public class NodeSimilarityLayout {
       targToRow.put(node, Integer.valueOf(count++));
     }
     
-    LoopReporter lr = new LoopReporter(rbd.allLinks.size(), 20, monitor, 0.0, 1.0, "progress.getConnectionVectors"); 
-    
     TreeMap<Integer, SortedSet<Integer>> retval = new TreeMap<Integer, SortedSet<Integer>>();
     Iterator<FabricLink> ldit = rbd.allLinks.iterator();
     while (ldit.hasNext()) {
-      FabricLink fl = ldit.next();
-      lr.report();
+      FabricLink fl = ldit.next(); //Integer col = ldit.next();
       if (fl.isShadow()) {
       	continue;
       }
-      NID.WithName srcName = fl.getSrcID();
+    //  BioFabricNetwork.LinkInfo linf = bfn.getLinkDefinition(col, false);
+      NID.WithName srcName = fl.getSrcID(); //linf.getSource();
       Integer srcRow = targToRow.get(srcName);
-      NID.WithName trgName = fl.getTrgID();
+      NID.WithName trgName = fl.getTrgID(); //.getTarget();
       Integer trgRow = targToRow.get(trgName);
 
       SortedSet<Integer> forRetval = retval.get(srcRow);
@@ -251,7 +253,6 @@ public class NodeSimilarityLayout {
       }
       forRetval.add(srcRow);
     }
-    lr.finish();
     return (retval);
   }
   
@@ -263,9 +264,7 @@ public class NodeSimilarityLayout {
   private Integer getCosines(SortedMap<Integer, SortedSet<Integer>> connVec, 
                              SortedMap<Double, SortedSet<Link>> retval, 
                              Map<Integer, Integer> connMag, 
-                             BioFabricNetwork.RelayoutBuildData rbd, 
-                             Map<NID.WithName, Integer> targToRow,
-                             BTProgressMonitor monitor) throws AsynchExitRequestException {
+                             BioFabricNetwork.RelayoutBuildData rbd, Map<NID.WithName, Integer> targToRow) {
     int rowCount = rbd.allNodeIDs.size();
     Integer[] icache = new Integer[rowCount];
     String[] scache = new String[rowCount];
@@ -273,16 +272,16 @@ public class NodeSimilarityLayout {
       icache[i] = Integer.valueOf(i);
       scache[i] = icache[i].toString();
     }
+ 
+    int count = 0;
+ 
     Integer highestDegree = null;
     int biggestMag = Integer.MIN_VALUE;
     HashSet<Integer> intersect = new HashSet<Integer>();
     
-    LoopReporter lr = new LoopReporter(rbd.allLinks.size(), 20, monitor, 0.0, 1.0, "progress.getCosines");  
-    
     Iterator<FabricLink> ldit = rbd.allLinks.iterator();
     while (ldit.hasNext()) {
       FabricLink fl = ldit.next();
-      lr.report();
       if (fl.isShadow()) {
       	continue;
       }
@@ -324,8 +323,8 @@ public class NodeSimilarityLayout {
         retval.put(dot, forDot);
       }
       forDot.add(new Link(scache[srcRow.intValue()], scache[trgRow.intValue()]));
-    }
-    lr.finish();
+      count++;
+    }  
     return (highestDegree);
   }
  
@@ -352,9 +351,7 @@ public class NodeSimilarityLayout {
   private Integer getJaccard(SortedMap<Integer, SortedSet<Integer>> connVec, 
                             SortedMap<Double, SortedSet<Link>> retval, 
                             Map<Integer, Integer> connMag, 
-                            BioFabricNetwork.RelayoutBuildData rbd, 
-                            Map<NID.WithName, Integer> targToRow,
-  	                        BTProgressMonitor monitor) throws AsynchExitRequestException {
+                            BioFabricNetwork.RelayoutBuildData rbd, Map<NID.WithName, Integer> targToRow) {
 
     int rowCount = rbd.allNodeIDs.size();
     Integer[] icache = new Integer[rowCount];
@@ -363,18 +360,17 @@ public class NodeSimilarityLayout {
       icache[i] = Integer.valueOf(i);
       scache[i] = icache[i].toString();
     }
+    
+    int count = 0;
 
     Integer highestDegree = null;
     int biggestMag = Integer.MIN_VALUE;
     HashSet<Integer> union = new HashSet<Integer>();
     HashSet<Integer> intersect = new HashSet<Integer>();
-    
-    LoopReporter lr = new LoopReporter(rbd.allLinks.size(), 20, monitor, 0.0, 1.0, "progress.getJaccard");  
       
     Iterator<FabricLink> ldit = rbd.allLinks.iterator();
     while (ldit.hasNext()) {
       FabricLink fl = ldit.next();
-      lr.report();
       if (fl.isShadow()) {
       	continue;
       }
@@ -413,8 +409,8 @@ public class NodeSimilarityLayout {
         retval.put(jaccardObj, forDot);
       }
       forDot.add(new Link(scache[srcRow.intValue()], scache[trgRow.intValue()]));
-    } 
-    lr.finish();
+      count++;
+    }  
     return (highestDegree);
   }
    
@@ -428,7 +424,7 @@ public class NodeSimilarityLayout {
   		                                             Integer start, SortedMap<Double, SortedSet<Link>> cosines, 
 			                                             Map<Integer, Integer> connMag, List<Link> linkTrace, 
 			                                             int limit, double tol, List<Integer> jumpLog,
-			                                             BTProgressMonitor monitor) 
+			                                             BTProgressMonitor monitor, double startFrac, double endFrac) 
 			                                               throws AsynchExitRequestException { 
     int rowCount = rowToTarg.size();
     ArrayList<Integer> retval = new ArrayList<Integer>();
@@ -450,17 +446,10 @@ public class NodeSimilarityLayout {
     int switchCount = 0;
     int stayCount = 0;
 
-    LoopReporter lr = new LoopReporter(rowCount, 20, monitor, 0.0, 1.0, "progress.orderByDistanceChained");
-    System.out.println("row count " + rowCount);
     //
     // Keep adding until all nodes are accounted for:
     //
-      
-    int lastSize = retval.size();
     while (retval.size() < rowCount) {
-    	int rtvSize = retval.size();
-      lr.report(rtvSize - lastSize);
-      lastSize = rtvSize;
       // Find best unconstrained hop:
       DoubleRanked bestHop = findBestUnseenHop(rowToTarg, cosines, connMag, seen, null, retval);  
       // Find best hop off the current search net:   
@@ -494,8 +483,14 @@ public class NodeSimilarityLayout {
         maintainChain(currentChain, currentHop, limit);
         stayCount++;
       }
+         
+      if (monitor != null) {
+        double currProg = startFrac + ((endFrac - startFrac) * ((double)retval.size() / (double)rowCount));
+        if (!monitor.updateProgress((int)(currProg * 100.0))) {
+          throw new AsynchExitRequestException();
+        }
+      }
     }
-    lr.finish();
     return (retval);
   }
  

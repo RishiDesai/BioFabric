@@ -44,7 +44,6 @@ public class LinePath {
   private int px;
   private int py;
   private MinMax range;
-  private boolean reusing;
   
   ////////////////////////////////////////////////////////////////////////////
   //
@@ -54,21 +53,15 @@ public class LinePath {
 
   /***************************************************************************
   **
-  ** For when we create one link path and reuse it:
-  */ 
-
-  LinePath() {
-  	reusing = true;
-  }
-
-  /***************************************************************************
-  **
   ** One constructor for both links and nodes.
   */ 
 
   LinePath(Color col, Line2D path, int x, int y, MinMax range) {
-  	reset(col, path, x, y, range);
-    reusing = false;
+    this.col = col;
+    this.path = path;
+    this.px = x;
+    this.py = y;
+    this.range = range;
   }
   
   ////////////////////////////////////////////////////////////////////////////
@@ -76,20 +69,6 @@ public class LinePath {
   // PACKAGE METHODS
   //
   ////////////////////////////////////////////////////////////////////////////
- 
-  /***************************************************************************
-  **
-  ** Reset the contents
-  */ 
-  
-  public LinePath reset(Color col, Line2D path, int x, int y, MinMax range) {
-    this.col = col;
-    this.path = path;
-    this.px = x;
-    this.py = y;
-    this.range = range;
-    return (this);
-  }  
   
   /***************************************************************************
   **
@@ -142,6 +121,7 @@ public class LinePath {
       		  replace = true;
       	  }	
       	  path.setLine(useLowBound, y1, useHiBound, y2);
+      	  replace = true;
       	}
         g2.draw(path);
         if (replace) {
@@ -183,13 +163,14 @@ public class LinePath {
         	if ((y2 - y1) > 100000.0) {
         	  if (y1 < bounds.getMinY()) {
         		  useLowBound = bounds.getY() - 1000.0;
-        		  replace = reusing;
+        		  replace = true;
         	  }
         	  if (y2 > bounds.getMaxY()) {
         		  useHiBound = bounds.getMaxY() + 1000.0;
-        		  replace = reusing;
+        		  replace = true;
         	  }	
         	  path.setLine(x1, useLowBound, x2, useHiBound);
+        	  replace = true;
         	}
           g2.draw(path);
           if (replace) {

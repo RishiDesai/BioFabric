@@ -23,7 +23,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.HashSet;
 import java.util.Set;
-import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -33,8 +32,6 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 import org.systemsbiology.biofabric.model.FabricLink;
-import org.systemsbiology.biofabric.util.AsynchExitRequestException;
-import org.systemsbiology.biofabric.util.BTProgressMonitor;
 import org.systemsbiology.biofabric.util.NID;
 
 /****************************************************************************
@@ -79,10 +76,23 @@ public class GraphSearcher {
   */
 
   public GraphSearcher(Set<NID.WithName> nodes, Set<FabricLink> links) {
-    allNodes_ = new HashSet<NID.WithName>(nodes);
-    allEdges_ = new HashSet<FabricLink>(links);
+
+    allNodes_ = new HashSet<NID.WithName>();
+    allEdges_ = new HashSet<FabricLink>();
     edgeOrder_ = null;
-    nodeOrder_ = null;
+    nodeOrder_ = null;    
+
+    Iterator<NID.WithName> ni = nodes.iterator();
+    Iterator<FabricLink> li = links.iterator();
+  
+    while (ni.hasNext()) {
+      allNodes_.add(ni.next());
+    }
+    
+    while (li.hasNext()) {
+      FabricLink link = li.next();
+      allEdges_.add(link.clone());
+    }
   }  
   
   /***************************************************************************
@@ -94,16 +104,22 @@ public class GraphSearcher {
 
   public GraphSearcher(List<NID.WithName> nodes, List<FabricLink> links) {
 
-    allNodes_ = new HashSet<NID.WithName>(nodes);
+    allNodes_ = new HashSet<NID.WithName>();
     allEdges_ = new HashSet<FabricLink>();
     edgeOrder_ = new ArrayList<FabricLink>();
-    nodeOrder_ = new ArrayList<NID.WithName>(nodes);
+    nodeOrder_ = new ArrayList<NID.WithName>();
 
-    for (FabricLink link : links) {
+    Iterator<FabricLink> li = links.iterator();
+  
+    nodeOrder_.addAll(nodes);
+    allNodes_.addAll(nodes);    
+
+    while (li.hasNext()) {
+      FabricLink link = li.next();
       if (!allEdges_.contains(link)) {
-        edgeOrder_.add(link);
+        edgeOrder_.add(link.clone());
       }
-      allEdges_.add(link);
+      allEdges_.add(link.clone());
     }
   }  
   
@@ -118,39 +134,59 @@ public class GraphSearcher {
   ** Map of node degree
   */
 
-  public Map<NID.WithName, Integer> nodeDegree(boolean inOnly, BTProgressMonitor monitor) throws AsynchExitRequestException {
-    return (nodeDegree(inOnly, allEdges_, monitor));
+  public Map<NID.WithName, Integer> nodeDegree(boolean inOnly) {
+    return (nodeDegree(inOnly, allEdges_));
   }
   
   /***************************************************************************
   ** 
-  ** Map of node degree. If inOnly == true, we only calculate in-degree. If false,
-  ** the degree number for a node is a combined in/out degree. Both sources and
-  ** targets are included.
+  ** Map of node degree
   */
 
-  public static Map<NID.WithName, Integer> nodeDegree(boolean inOnly, Set<FabricLink> edges, 
-                                                      BTProgressMonitor monitor) throws AsynchExitRequestException {
+  public static Map<NID.WithName, Integer> nodeDegree(boolean inOnly, Set<FabricLink> edges) {
     
     HashMap<NID.WithName, Integer> retval = new HashMap<NID.WithName, Integer>();
 
-    for (FabricLink link : edges) {
+    Iterator<FabricLink> li = edges.iterator();
+    while (li.hasNext()) {
+      FabricLink link = li.next();
       NID.WithName src = link.getSrcID();
       NID.WithName trg = link.getTrgID();
       if (!inOnly) {
         Integer deg = retval.get(src);
         if (deg == null) {
-          retval.put(src, Integer.valueOf(1));
+          retval.put(src, new Integer(1));
         } else {
-          retval.put(src, Integer.valueOf(deg.intValue() + 1));
+          retval.put(src, new Integer(deg.intValue() + 1));
         }
       }
       Integer deg = retval.get(trg);
       if (deg == null) {
-        retval.put(trg, Integer.valueOf(1));
+        retval.put(trg, new Integer(1));
       } else {
-        retval.put(trg, Integer.valueOf(deg.intValue() + 1));
+        retval.put(trg, new Integer(deg.intValue() + 1));
       }
+    }
+    return (retval);
+  }
+
+  
+  /***************************************************************************
+  ** 
+  ** Sorted set of node degree
+  */
+
+  public SortedSet<NodeDegree> nodeDegreeSet() {
+    
+    TreeSet<NodeDegree> retval = new TreeSet<NodeDegree>();
+
+    Map<NID.WithName, Integer> nds = nodeDegree(false);
+    
+    Iterator<NID.WithName> li = nds.keySet().iterator();
+    while (li.hasNext()) {
+      NID.WithName node = li.next();
+      NodeDegree ndeg = new NodeDegree(node, nds.get(node).intValue());
+      retval.add(ndeg);
     }
     return (retval);
   }
@@ -160,24 +196,15 @@ public class GraphSearcher {
   ** Sorted set of node degree
   */
 
-  private SortedSet<NodeDegree> nodeDegreeSet(BTProgressMonitor monitor) throws AsynchExitRequestException {
-    return (nodeDegreeSet(allEdges_, monitor));
-  }
-  
-  /***************************************************************************
-  ** 
-  ** Nodes annotated by full degree as NodeDegree objects are ordered by degree.
-  ** When equal degree, sorted by name:
-  */
+  public static SortedSet<NodeDegree> nodeDegreeSet(Set<FabricLink> edges) {
+    
+    TreeSet<NodeDegree> retval = new TreeSet<NodeDegree>();
 
-  private static SortedSet<NodeDegree> nodeDegreeSet(Set<FabricLink> edges, 
-                                                     BTProgressMonitor monitor) throws AsynchExitRequestException {
-    TreeSet<NodeDegree> retval = new TreeSet<NodeDegree>();   
-    // Map of node degree. Since the first argument is false,
-    // the provided degree number is the combined in/out degree.
-    Map<NID.WithName, Integer> nds = nodeDegree(false, edges, monitor);
-    // Adding to sorted set orders by degree:
-    for (NID.WithName node : nds.keySet()) {
+    Map<NID.WithName, Integer> nds = nodeDegree(false, edges);
+    
+    Iterator<NID.WithName> li = nds.keySet().iterator();
+    while (li.hasNext()) {
+      NID.WithName node = li.next();
       NodeDegree ndeg = new NodeDegree(node, nds.get(node).intValue());
       retval.add(ndeg);
     }
@@ -186,7 +213,7 @@ public class GraphSearcher {
   
   /***************************************************************************
   ** 
-  ** Sorts the provided set of nodes by node degree, then name.
+  ** Sorted set of node degree
   */
 
   public static List<NID.WithName> nodesByDegree(Set<NID.WithName> nodes, SortedSet<NodeDegree> nds) {
@@ -196,7 +223,7 @@ public class GraphSearcher {
     Iterator<NodeDegree> li = nds.iterator();
     while (li.hasNext()) {
       NodeDegree nd = li.next();
-      NID.WithName node = nd.getNodeID();
+      NID.WithName node = nd.getNode();
       if (nodes.contains(node)) {
         retval.add(node);
       }
@@ -212,8 +239,9 @@ public class GraphSearcher {
   public SortedSet<SourcedNodeDegree> nodeDegreeSetWithSource(List<NID.WithName> sourceOrder) {
  
     HashMap<NID.WithName, Set<NID.WithName>> allSrcs = new HashMap<NID.WithName, Set<NID.WithName>>();
-
-    for (FabricLink nextLink : allEdges_) {
+    Iterator<FabricLink> lit = allEdges_.iterator();
+    while (lit.hasNext()) {
+      FabricLink nextLink = lit.next();
       NID.WithName trg = nextLink.getTrgID();
       Set<NID.WithName> trgSources = allSrcs.get(trg);
       if (trgSources == null) {
@@ -225,7 +253,9 @@ public class GraphSearcher {
     
     TreeSet<SourcedNodeDegree> retval = new TreeSet<SourcedNodeDegree>();
 
-    for (NID.WithName node : allSrcs.keySet()) {
+    Iterator<NID.WithName> li = allSrcs.keySet().iterator();
+    while (li.hasNext()) {
+      NID.WithName node = li.next();
       Set<NID.WithName> trgSources = allSrcs.get(node);
       SourcedNodeDegree ndeg = new SourcedNodeDegree(node, sourceOrder, trgSources);
       retval.add(ndeg);
@@ -233,60 +263,20 @@ public class GraphSearcher {
     return (retval);
   }
   
+   
   /***************************************************************************
   ** 
-  ** Sorted set of nodes via gray code
+  ** Sorted list of nodes by degree
   */
 
-  public SortedSet<SourcedNodeGray> nodeGraySetWithSource(List<NID.WithName> sourceOrder) {
-    HashMap<NID.WithName, Set<NID.WithName>> allSrcs = new HashMap<NID.WithName, Set<NID.WithName>>();
+  public List<NID.WithName> nodeDegreeOrder() {
     
-    for (FabricLink nextLink : allEdges_) {
-      NID.WithName trg = nextLink.getTrgID();
-      Set<NID.WithName> trgSources = allSrcs.get(trg);
-      if (trgSources == null) {
-        trgSources = new HashSet<NID.WithName>();
-        allSrcs.put(trg, trgSources);
-      }
-      trgSources.add(nextLink.getSrcID());
-    } 
-    
-    TreeSet<SourcedNodeGray> retval = new TreeSet<SourcedNodeGray>();
-
-    for (NID.WithName node : allSrcs.keySet()) {
-      Set<NID.WithName> trgSources = allSrcs.get(node);
-      SourcedNodeGray ndeg = new SourcedNodeGray(node, sourceOrder, trgSources);
-      retval.add(ndeg);
-    }
-    return (retval);
-  }
-  
-  /***************************************************************************
-  ** 
-  ** Sorted set of nodes via gray code
-  */
-
-  public static SortedSet<SourcedNodeGray> nodeGraySetWithSourceFromMap(List<NID.WithName> sourceOrder, 
-                                                                        Map<NID.WithName, Set<NID.WithName>> srcsPerTarg) {
-     
-    TreeSet<SourcedNodeGray> retval = new TreeSet<SourcedNodeGray>();
-    for (NID.WithName node : srcsPerTarg.keySet()) {
-      SourcedNodeGray ndeg = new SourcedNodeGray(node, sourceOrder, srcsPerTarg.get(node));
-      retval.add(ndeg);
-    }
-    return (retval);
-  }
-    
-  /***************************************************************************
-  ** 
-  ** Sorted list of nodes, ordered by degree. 
-  */
-
-  public List<NID.WithName> nodeDegreeOrder(BTProgressMonitor monitor) throws AsynchExitRequestException {
     ArrayList<NID.WithName> retval = new ArrayList<NID.WithName>();
-    SortedSet<NodeDegree> nds = nodeDegreeSet(monitor);
-    for (NodeDegree ndeg : nds) {
-      retval.add(ndeg.getNodeID());
+    SortedSet<NodeDegree> nds = nodeDegreeSet();
+    Iterator<NodeDegree> li = nds.iterator();
+    while (li.hasNext()) {
+      NodeDegree ndeg = li.next();
+      retval.add(ndeg.getNode());
     }
     return (retval);
   }
@@ -359,12 +349,16 @@ public class GraphSearcher {
     List<QueueEntry> retval = new ArrayList<QueueEntry>();
     if (edgeOrder_ != null) {
       HashSet<NID.WithName> seenRoots = new HashSet<NID.WithName>();
-      for (NID.WithName currNode : nodeOrder_) {
+      Iterator<NID.WithName> nit = nodeOrder_.iterator();
+      while (nit.hasNext()) {
+        NID.WithName currNode = nit.next();
         if (!rootNodes.contains(currNode)) {
           continue;
         }
         boolean gottaLink = false;
-        for (FabricLink link : edgeOrder_) {
+        Iterator<FabricLink> eit = edgeOrder_.iterator();
+        while (eit.hasNext()) {
+          FabricLink link = eit.next();
           NID.WithName src = link.getSrcID();
           if (!currNode.equals(src)) {
             continue;
@@ -382,8 +376,9 @@ public class GraphSearcher {
         }
       }
     } else {
-      for (NID.WithName currNode : rootNodes) {
-        searchGutsDepth(currNode, visited, outEdges, 0, null, retval);
+      Iterator<NID.WithName> rit = rootNodes.iterator();
+      while (rit.hasNext()) {
+        searchGutsDepth(rit.next(), visited, outEdges, 0, null, retval);
       }
     }
     return (retval);
@@ -394,13 +389,13 @@ public class GraphSearcher {
   ** Breadth-First Search, ordered by degree
   */
 
-  public List<QueueEntry> breadthSearch(List<NID.WithName> startNodes, BTProgressMonitor monitor) throws AsynchExitRequestException {
+  public List<QueueEntry> breadthSearch(List<NID.WithName> startNodes) {
     
     if (edgeOrder_ != null) {
       throw new IllegalStateException();
     }
     
-    List<NID.WithName> byDeg = nodeDegreeOrder(monitor);
+    List<NID.WithName> byDeg = nodeDegreeOrder();
     Collections.reverse(byDeg);
     ArrayList<NID.WithName> toProcess = new ArrayList<NID.WithName>(byDeg);
     
@@ -414,12 +409,12 @@ public class GraphSearcher {
     //
     // Do until everybody is visited
     //
-    
     HashSet<NID.WithName> visited = new HashSet<NID.WithName>();
     ArrayList<QueueEntry> queue = new ArrayList<QueueEntry>();
     List<QueueEntry> retval = new ArrayList<QueueEntry>();
     Map<NID.WithName, Set<FabricLink>> outEdges = calcOutboundEdges(allEdges_);    
-       
+   
+    
     while (!toProcess.isEmpty()) {  
 	    queue.add(new QueueEntry(0, toProcess.get(0)));
 	    searchGutsBreadth(visited, queue, outEdges, retval, null, byDeg);
@@ -428,49 +423,6 @@ public class GraphSearcher {
     return (retval);
   }
   
-  /***************************************************************************
-  ** 
-  ** Breadth-First Search
-  */
-
-  public List<QueueEntry> breadthSearch(boolean byDegree, List<NID.WithName> useRoots, 
-                                        BTProgressMonitor monitor) throws AsynchExitRequestException {
-    
-    if (edgeOrder_ != null) {
-      throw new IllegalStateException();
-    }
-    
-    List<NID.WithName> byDeg = null;
-    if (byDegree) {
-      byDeg = nodeDegreeOrder(monitor);
-      Collections.reverse(byDeg);
-    }   
-    
-    //
-    // Do until roots are exhausted
-    //
-    HashSet<NID.WithName> visited = new HashSet<NID.WithName>();
-    ArrayList<QueueEntry> queue = new ArrayList<QueueEntry>();
-    List<QueueEntry> retval = new ArrayList<QueueEntry>();
-    Map<NID.WithName, Set<FabricLink>> outEdges = calcOutboundEdges(allEdges_);    
-   
-    
-    List<NID.WithName> rootNodes;
-    if (useRoots == null) {
-      rootNodes = new ArrayList<NID.WithName>(buildRootList(allNodes_, allEdges_));
-    } else {
-      rootNodes = useRoots;
-    }
-    
-    
-    Iterator<NID.WithName> rit = rootNodes.iterator();
-    while (rit.hasNext()) {
-      queue.add(new QueueEntry(0, rit.next()));
-    }
-  
-    searchGutsBreadth(visited, queue, outEdges, retval, null, byDeg);
-    return (retval);
-  }
   
   /***************************************************************************
   ** 
@@ -554,13 +506,12 @@ public class GraphSearcher {
   ** Take a sort to a simple listing
   */
   
-  public List<NID.WithName> topoSortToPartialOrdering(Map<NID.WithName, Integer> topoSort, Set<FabricLink> allLinks,
-                                                      BTProgressMonitor monitor) throws AsynchExitRequestException {
+  public List<NID.WithName> topoSortToPartialOrdering(Map<NID.WithName, Integer> topoSort, Set<FabricLink> allLinks) {
     
     ArrayList<NID.WithName> retval = new ArrayList<NID.WithName>();
     TreeMap<Integer, List<NID.WithName>> invert = new TreeMap<Integer, List<NID.WithName>>();
     
-    SortedSet<NodeDegree> nds = nodeDegreeSet(allLinks, monitor);
+    SortedSet<NodeDegree> nds = nodeDegreeSet(allLinks);
     
     invertTopoSort(topoSort, invert);    
     Iterator<List<NID.WithName>> kit = invert.values().iterator();
@@ -573,23 +524,7 @@ public class GraphSearcher {
     return (retval);
   }  
   
-  /***************************************************************************
-  ** 
-  ** Prune edge list to only those from given source nodes
-  */
-
-  public List<FabricLink> onlyLinksFromSources(List<FabricLink> linkList, Set<NID.WithName> nodes) {    
-    
-    ArrayList<FabricLink> retval = new ArrayList<FabricLink>();
-    int numLinks = linkList.size();
-    for (int j = 0; j < numLinks; j++) {
-      FabricLink link = linkList.get(j);
-      if (nodes.contains(link.getSrcID())) {
-        retval.add(link);
-      }
-    }  
-    return (retval);
-  } 
+  
   
   ////////////////////////////////////////////////////////////////////////////
   //
@@ -602,21 +537,20 @@ public class GraphSearcher {
   ** With a given topo sort, force the given moveID to one end
   */
 
-  public static Map<NID.WithName, Integer> topoSortReposition(Map<NID.WithName, Integer> origSort, 
-                                                              NID.WithName moveID, boolean moveMin) {
+  public static Map<String, Integer> topoSortReposition(Map<String, Integer> origSort, String moveID, boolean moveMin) {
     
     Integer origCol = origSort.get(moveID);
     if (origCol == null) {
-      return (new HashMap<NID.WithName, Integer>(origSort));
+      return (new HashMap<String, Integer>(origSort));
     }
     
     int colVal = origCol.intValue();
     boolean colDup = false;
     int minVal = Integer.MAX_VALUE;
     int maxVal = Integer.MIN_VALUE;
-    Iterator<NID.WithName> oskit = origSort.keySet().iterator();
+    Iterator<String> oskit = origSort.keySet().iterator();
     while (oskit.hasNext()) {
-      NID.WithName key = oskit.next();
+      String key = oskit.next();
       if (key.equals(moveID)) {
         continue;
       }
@@ -663,18 +597,18 @@ public class GraphSearcher {
       } 
     }
       
-    HashMap<NID.WithName, Integer> retval = new HashMap<NID.WithName, Integer>();
+    HashMap<String, Integer> retval = new HashMap<String, Integer>();
   
     oskit = origSort.keySet().iterator();
     while (oskit.hasNext()) {
-      NID.WithName key = oskit.next();
+      String key = oskit.next();
       if (key.equals(moveID)) {
-        retval.put(moveID, Integer.valueOf(moveCol));
+        retval.put(moveID, new Integer(moveCol));
       } else {   
         Integer checkCol = origSort.get(key);
         int chekVal = checkCol.intValue();
         if ((chekVal >= minMove) && (chekVal <= maxMove)) {
-          retval.put(key, Integer.valueOf(chekVal + inc));
+          retval.put(key, new Integer(chekVal + inc));
         } else {
           retval.put(key, checkCol);
         }
@@ -683,100 +617,6 @@ public class GraphSearcher {
     return (retval);
   }
   
-  /***************************************************************************
-  ** 
-  ** Take a sort to a simple listing
-  */
-  
-  public List<NID.WithName> topoSortToPartialOrderingByDegree(Map<NID.WithName, Integer> topoSort, Map<NID.WithName, Integer> degree) {
-    
-    ArrayList<NID.WithName> retval = new ArrayList<NID.WithName>();
-    TreeMap<Integer, List<NID.WithName>> invert = new TreeMap<Integer, List<NID.WithName>>();
-    
-    invertTopoSort(topoSort, invert);    
-    
-    boolean first = true;
-    Iterator<List<NID.WithName>> kit = invert.values().iterator();
-    while (kit.hasNext()) {
-      List<NID.WithName> listForLevel = kit.next();
-      if (first) {
-        first = false;
-        SortedSet<NodeDegree> ssnd = new TreeSet<NodeDegree>(Collections.reverseOrder());
-        for (int i = 0; i < listForLevel.size(); i++) {
-          NID.WithName node = listForLevel.get(i);
-          ssnd.add(new NodeDegree(node, degree.get(node).intValue()));
-        } 
-        for (NodeDegree nd : ssnd) {
-          retval.add(nd.getNodeID());
-        }
-      } else {
-        HashSet<NID.WithName> snSortSet = new HashSet<NID.WithName>(retval);
-        List<FabricLink> justFromSrc = onlyLinksFromSources(new ArrayList<FabricLink>(allEdges_), new HashSet<NID.WithName>(retval));
-        ArrayList<NID.WithName> working = new ArrayList<NID.WithName>(retval);
-        working.addAll(listForLevel);
-        GraphSearcher gs = new GraphSearcher(working, justFromSrc); 
-        SortedSet<GraphSearcher.SourcedNodeDegree> snds = gs.nodeDegreeSetWithSource(retval);
-        Iterator<GraphSearcher.SourcedNodeDegree> dfit = snds.iterator();
-        while (dfit.hasNext()) {
-          GraphSearcher.SourcedNodeDegree node = dfit.next();
-          if (!snSortSet.contains(node.getNode())) {
-            retval.add(node.getNode());
-          }
-        } 
-      }
-    }
-    return (retval);
-  } 
-  
-  /***************************************************************************
-  ** 
-  ** Take a sort to a simple listing
-  */
-  
-  public List<NID.WithName> topoSortToPartialOrderingByGray(Map<NID.WithName, Integer> topoSort, Map<NID.WithName, Integer> degree) {
-    
-    ArrayList<NID.WithName> retval = new ArrayList<NID.WithName>();
-    TreeMap<Integer, List<NID.WithName>> invert = new TreeMap<Integer, List<NID.WithName>>();
-    
-    invertTopoSort(topoSort, invert);    
-    
-    boolean first = true;
-    Iterator<List<NID.WithName>> kit = invert.values().iterator();
-    while (kit.hasNext()) {
-      List<NID.WithName> listForLevel = kit.next();
-      if (first) {
-        first = false;
-        SortedSet<NodeDegree> ssnd = new TreeSet<NodeDegree>(Collections.reverseOrder());
-        for (int i = 0; i < listForLevel.size(); i++) {
-          NID.WithName node = listForLevel.get(i);
-          ssnd.add(new NodeDegree(node, degree.get(node).intValue()));
-        } 
-        for (NodeDegree nd : ssnd) {
-          retval.add(nd.getNodeID());
-        }
-      } else {
-        HashSet<NID.WithName> snSortSet = new HashSet<NID.WithName>(retval);
-        List<FabricLink> justFromSrc = onlyLinksFromSources(new ArrayList<FabricLink>(allEdges_), new HashSet<NID.WithName>(retval));
-        ArrayList<NID.WithName> working = new ArrayList<NID.WithName>(retval);
-        working.addAll(listForLevel);
-        GraphSearcher gs = new GraphSearcher(working, justFromSrc); 
-        SortedSet<GraphSearcher.SourcedNodeGray> snds = gs.nodeGraySetWithSource(retval);
-        Iterator<GraphSearcher.SourcedNodeGray> dfit = snds.iterator();
-        while (dfit.hasNext()) {
-          GraphSearcher.SourcedNodeGray node = dfit.next();
-          if (!snSortSet.contains(node.getNodeID())) {
-            retval.add(node.getNodeID());
-            System.out.println(node.gray_.toString(2));
-          }
-        } 
-      }
-      
-      // Want reproducibility between VfA and Vfg layouts.  This is required.
-     // Collections.sort(listForLevel);
-     // retval.addAll(listForLevel);
-    }
-    return (retval);
-  } 
   
   ////////////////////////////////////////////////////////////////////////////
   //
@@ -793,7 +633,6 @@ public class GraphSearcher {
       this.name = name;
     }
     
-    @Override
     public String toString() {
       return (name + " depth = " + depth);
     }
@@ -811,8 +650,7 @@ public class GraphSearcher {
  
   /****************************************************************************
   **
-  ** Node annotated by degree. The comparator orders by degree. For equal
-  ** degree, uses lexicographic node name order. 
+  ** A Class
   */
   
   public static class NodeDegree implements Comparable<NodeDegree> {
@@ -825,7 +663,7 @@ public class GraphSearcher {
       degree_ = degree;
     }
     
-    public NID.WithName getNodeID() {
+    public NID.WithName getNode() {
       return (node_);
     }
     
@@ -864,9 +702,7 @@ public class GraphSearcher {
   
   /****************************************************************************
   **
-  ** Node annotated by degree and by sources. Ordering such that higher degree
-  ** nodes some first, and equal degree nodes are ordered by order of source
-  ** nodes.
+  ** A Class
   */
   
   public static class SourcedNodeDegree implements Comparable<SourcedNodeDegree> {
@@ -914,11 +750,6 @@ public class GraphSearcher {
     }
     
     public int compareTo(SourcedNodeDegree otherDeg) {
-      
-      if (this.node_.equals(otherDeg.node_)) {
-        return (0);
-      }    
-      
       if (this.degree_ != otherDeg.degree_) {
         // Higher degree is first:
         return (otherDeg.degree_ - this.degree_);
@@ -955,284 +786,6 @@ public class GraphSearcher {
     } 
   }
   
-  /****************************************************************************
-  **
-  ** A Class
-  */
-  
-  public static class SourcedNodeGray implements Comparable<SourcedNodeGray> {
-    
-    private NID.WithName node_;
-    private int degree_;
-    private char[] srcs_;
-    private String binNum_;
-    private BigInteger bi_;
-    private BigInteger gray_;
-    private List<NID.WithName> srcOrder_;
-    
-    public SourcedNodeGray(NID.WithName node, List<NID.WithName> srcOrder, Set<NID.WithName> mySrcs) {
-      node_ = node;
-      degree_ = mySrcs.size();
-      int numSrc = srcOrder.size();
-      srcOrder_ = new ArrayList<NID.WithName>(srcOrder);
-      srcs_ = new char[numSrc];
-      for (int i = 0; i < numSrc; i++) {
-        srcs_[i] = (mySrcs.contains(srcOrder.get(i))) ? '1' : '0';
-      }
-      binNum_ = String.copyValueOf(srcs_);
-   
-      gray_ = new BigInteger(binNum_, 2);
-      bi_ = gray_;
-      BigInteger working = gray_;
-      while (true) {
-        working = working.shiftRight(1); // sign extension, but our numbers are always positive.
-        if (working.equals(BigInteger.ZERO)) {
-          break;
-        }
-        bi_ = bi_.xor(working);
-      }
-    }
-      
-    public NID.WithName getNodeID() {
-      return (node_);
-    }
-
-    public String getBinNum() {
-      return (binNum_);
-    }    
-
-    @Override
-    public int hashCode() {
-      return (node_.hashCode() + degree_);
-    }
-  
-    @Override
-    public String toString() {
-      return (" node = " + node_ + " degree = " + degree_ + " gray_ = " + gray_.toString(2) + " bi = " + bi_.toString(2));
-    }
-    
-    public String toStringAsSets() {
-      StringBuffer ret = new StringBuffer();
-      ret.append(node_.getName());
-      ret.append(": ");
-          
-      boolean first = true;
-      for (int i = 0; i < srcs_.length; i++) {
-        if (srcs_[i] == '1') {
-          if (!first) {
-            ret.append(" + ");
-          } else {
-            first = false;
-          }
-          ret.append(srcOrder_.get(i));
-        }
-      }   
-      return (ret.toString());
-    }
-    
-    @Override
-    public boolean equals(Object other) {
-      if (!(other instanceof SourcedNodeGray)) {
-        return (false);
-      }
-      SourcedNodeGray otherDeg = (SourcedNodeGray)other;    
-      if (this.degree_ != otherDeg.degree_) {
-        return (false);
-      }
-      return ((this.node_ == null) ? (otherDeg.node_ == null) : this.node_.equals(otherDeg.node_));
-    }
-    
-    public int compareTo(SourcedNodeGray otherDeg) {
-      int nameDiff = (this.node_.compareTo(otherDeg.node_));
-      if (nameDiff == 0) {
-        return (0);
-      }
-    
-      int grayComp = -this.bi_.compareTo(otherDeg.bi_);
-      if (grayComp != 0) {
-        return (grayComp);
-      }
-  
-      return (nameDiff);
-    } 
-  }
-  
-  /****************************************************************************
-  **
-  ** A Class
-  */
-  
-  public static class SourcedNode implements Comparable<SourcedNode> {
-    
-    private NID.WithName node_;
-    private int myIn_;
-    private ArrayList<Integer> mySourceOrderList_;
-   
-    public SourcedNode(NID.WithName node, Map<NID.WithName, Integer> inDegs, 
-                       Map<NID.WithName, Integer> nameToRow, Map<NID.WithName, Set<NID.WithName>> l2s) {
-      node_ = node;
-      TreeSet<Integer> myOrder = new TreeSet<Integer>(); 
-      Set<NID.WithName> mySet = l2s.get(node_);
-      for (NID.WithName nextNode : mySet) {
-        Integer nextSourceRow = nameToRow.get(nextNode);
-        myOrder.add(nextSourceRow);       
-      }
-      mySourceOrderList_ = new ArrayList<Integer>(myOrder);
-      myIn_ = inDegs.get(node_).intValue();
-    }
-    
-    public NID.WithName getNode() {
-      return (node_);
-    }
-    
-    @Override
-    public int hashCode() {
-      return (node_.hashCode());
-    }
-  
-    @Override
-    public String toString() {
-      return (" node = " + node_);
-    }
-    
-    @Override
-    public boolean equals(Object other) {
-      if (!(other instanceof SourcedNode)) {
-        return (false);
-      }
-      SourcedNode otherDeg = (SourcedNode)other;    
-      return ((this.node_ == null) ? (otherDeg.node_ == null) : this.node_.equals(otherDeg.node_));
-    }
-    
-    public int compareTo(SourcedNode otherDeg) {
-      
-      //
-      // Same name, same node:
-      //
-      
-      if (this.node_.equals(otherDeg.node_)) {
-        return (0);
-      }
-          
-      int mySize = this.mySourceOrderList_.size();
-      int hisSize = otherDeg.mySourceOrderList_.size();
-      int min = Math.min(mySize, hisSize);
-      for (int i = 0; i < min; i++) {
-        int myVal = this.mySourceOrderList_.get(i).intValue();
-        int hisVal = otherDeg.mySourceOrderList_.get(i).intValue();
-        int diff = hisVal - myVal;
-        if (diff != 0) {
-          return (diff);
-        }
-      }
-      
-      int diffSize = hisSize - mySize;
-      if (diffSize != 0) {
-        return (diffSize);
-      }
-      
-      int diffIn = this.myIn_ - otherDeg.myIn_;
-      if (diffIn != 0) {
-        return (diffIn);
-      }
-      
-      if (this.node_ == null) {
-        return ((otherDeg.node_ == null) ? 0 : -1);
-      }
-      return (this.node_.compareTo(otherDeg.node_));
-    } 
-  }
-  
-  /****************************************************************************
-  **
-  ** A class that allows us to sort nodes based on input order
-  */
-
-  public static class MMDSourcedNode implements Comparable<MMDSourcedNode> {
-
-    private NID.WithName node_;
-    private int myIn_;
-    private ArrayList<Integer> mySourceOrderList_;
-   
-    public MMDSourcedNode(NID.WithName node, Map<NID.WithName, Integer> inDegs, 
-                          List<NID.WithName> placeList, Map<NID.WithName, Set<NID.WithName>> l2s) {
-      node_ = node;
-      Set<NID.WithName> mySet = l2s.get(node_);
-      TreeSet<Integer> mySourceOrder = new TreeSet<Integer>();
-      int numNode = placeList.size();
-      for (int i = 0; i < numNode; i++) {
-        NID.WithName nodex = placeList.get(i);
-        if (mySet.contains(nodex)) {
-          mySourceOrder.add(Integer.valueOf(i));
-        }
-      }
-      mySourceOrderList_ = new ArrayList<Integer>();
-      myIn_ = inDegs.get(this.node_).intValue();
-    }
-
-    public NID.WithName getNode() {
-      return (node_);
-    }
-
-    @Override
-    public int hashCode() {
-      return (node_.hashCode());
-    }
-
-    @Override
-    public String toString() {
-      return (" node = " + node_);
-    }
-
-    @Override
-    public boolean equals(Object other) {
-      if (!(other instanceof SourcedNode)) {
-        return (false);
-      }
-      MMDSourcedNode otherDeg = (MMDSourcedNode)other;
-      return ((this.node_ == null) ? (otherDeg.node_ == null) : this.node_.equals(otherDeg.node_));
-    }
-
-    public int compareTo(MMDSourcedNode otherDeg) {
-
-      //
-      // Same name, same node:
-      //
-
-      if (this.node_.equals(otherDeg.node_)) {
-        return (0);
-      }
-
-      int mySize = this.mySourceOrderList_.size();
-      int hisSize = otherDeg.mySourceOrderList_.size();
-      int min = Math.min(mySize, hisSize);
-      for (int i = 0; i < min; i++) {
-        int myVal = this.mySourceOrderList_.get(i).intValue();
-        int hisVal = otherDeg.mySourceOrderList_.get(i).intValue();
-        int diff = hisVal - myVal;
-        if (diff != 0) {
-          return (diff);
-        }
-      }
-
-      int diffSize = hisSize - mySize;
-      if (diffSize != 0) {
-        return (diffSize);
-      }
-
-      int myIn = this.myIn_;
-      int hisIn = otherDeg.myIn_;
-      int diffIn = myIn - hisIn;
-      if (diffIn != 0) {
-        return (diffIn);
-      }
-
-      if (this.node_ == null) {
-        return ((otherDeg.node_ == null) ? 0 : -1);
-      }
-      return (this.node_.compareTo(otherDeg.node_));
-    }
-  }
   
   ////////////////////////////////////////////////////////////////////////////
   //

@@ -25,6 +25,11 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.awt.image.DataBufferByte;
+import java.awt.image.PixelInterleavedSampleModel;
+import java.awt.image.Raster;
+import java.awt.image.SampleModel;
+import java.awt.image.WritableRaster;
 
 
 /****************************************************************************
@@ -32,7 +37,7 @@ import java.util.List;
 ** This is a cache for reusing buffered images
 */
 
-public class ImgAndBufPool {
+public class BufImgStack {
     
   ////////////////////////////////////////////////////////////////////////////
   //
@@ -56,7 +61,7 @@ public class ImgAndBufPool {
   ** Constructor
   */
 
-  public ImgAndBufPool(int binSize) {
+  public BufImgStack(int binSize) {
     biStack_ = new HashMap<StackKey, List<BufferedImage>>();
     bufStack_ = new HashMap<Integer, List<int[]>>();
     byteStack_ = new HashMap<Integer, List<byte[]>>();

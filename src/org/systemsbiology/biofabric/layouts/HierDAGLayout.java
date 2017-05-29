@@ -29,21 +29,30 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
-import org.systemsbiology.biofabric.analysis.CycleFinder;
-import org.systemsbiology.biofabric.analysis.GraphSearcher;
 import org.systemsbiology.biofabric.model.BioFabricNetwork;
 import org.systemsbiology.biofabric.model.FabricLink;
 import org.systemsbiology.biofabric.util.AsynchExitRequestException;
 import org.systemsbiology.biofabric.util.BTProgressMonitor;
-import org.systemsbiology.biofabric.util.LoopReporter;
 import org.systemsbiology.biofabric.util.NID;
 
 /****************************************************************************
 **
-** This is a hierarchical layout for a directed acyclic graph
+** This is a hierarchical layout of a DAG
 */
 
 public class HierDAGLayout {
+  
+  ////////////////////////////////////////////////////////////////////////////
+  //
+  // PRIVATE CONSTANTS
+  //
+  //////////////////////////////////////////////////////////////////////////// 
+  
+  ////////////////////////////////////////////////////////////////////////////
+  //
+  // PUBLIC CONSTANTS
+  //
+  //////////////////////////////////////////////////////////////////////////// 
   
   ////////////////////////////////////////////////////////////////////////////
   //
@@ -55,8 +64,6 @@ public class HierDAGLayout {
    private Map<NID.WithName, Integer> inDegs_;
    private Map<NID.WithName, Integer> outDegs_;
    private ArrayList<NID.WithName> placeList_;
-   private HashMap<NID.WithName, Integer> nameToRow_;
-   private boolean pointUp_;
   
   ////////////////////////////////////////////////////////////////////////////
   //
@@ -69,13 +76,11 @@ public class HierDAGLayout {
   ** Constructor
   */
 
-  public HierDAGLayout(boolean pointUp) {
+  public HierDAGLayout() {
      l2s_ = new HashMap<NID.WithName, Set<NID.WithName>>();
      inDegs_ = new HashMap<NID.WithName, Integer>();
      outDegs_ = new HashMap<NID.WithName, Integer>();
      placeList_ = new ArrayList<NID.WithName>();
-     nameToRow_ = new HashMap<NID.WithName, Integer>();
-     pointUp_ = pointUp;
   }
 
   ////////////////////////////////////////////////////////////////////////////
@@ -86,96 +91,59 @@ public class HierDAGLayout {
  
   /***************************************************************************
   **
-  ** Find out if the necessary conditions for this layout are met. 
-  */
-  
-  public boolean criteriaMet(BioFabricNetwork.RelayoutBuildData rbd,
-  		                     BTProgressMonitor monitor) throws AsynchExitRequestException, 
-                                                             LayoutCriterionFailureException {
-  	//
-  	// 1) All the relations in the network are directed
-  	// 2) There are no cycles in the network
-  	//
-	  
-	  LoopReporter lr = new LoopReporter(rbd.allLinks.size(), 20, monitor, 0.0, 1.0, "progress.hDagLayoutCriteriaCheck");
-	  
-    for (FabricLink aLink : rbd.allLinks) {
-      lr.report();
-      if (!aLink.isDirected()) {
-    	  throw new LayoutCriterionFailureException();
-      }
-    }
-    lr.finish();
-	  
-  	CycleFinder cf = new CycleFinder(rbd.allNodeIDs, rbd.allLinks, monitor);
-    if (cf.hasACycle(monitor)) {
-      throw new LayoutCriterionFailureException();
-    }
-    return (true); 	
-  }
-
-  /***************************************************************************
-  **
-  ** Layout the network
+  ** Relayout the network!
   */
   
   public void doLayout(BioFabricNetwork.RelayoutBuildData rbd,
-  		                 BTProgressMonitor monitor) throws AsynchExitRequestException {
-    doNodeLayout(rbd, monitor);
-    (new DefaultEdgeLayout()).layoutEdges(rbd, monitor);
+  		                 BTProgressMonitor monitor, 
+                       double startFrac, 
+                       double endFrac) throws AsynchExitRequestException {
+    doNodeLayout(rbd);
+    (new DefaultEdgeLayout()).layoutEdges(rbd, monitor, startFrac, endFrac);
     return;
   }
   
   /***************************************************************************
   **
-  ** Generate the Node ordering
+  ** Relayout the network!
   */
   
-  private List<NID.WithName> doNodeLayout(BioFabricNetwork.RelayoutBuildData rbd, 
-  		   																  BTProgressMonitor monitor) throws AsynchExitRequestException {
+  public List<NID.WithName> doNodeLayout(BioFabricNetwork.RelayoutBuildData rbd) {
     
-    List<NID.WithName> targets = orderByNodeDegree(rbd, monitor);       
+    List<NID.WithName> targets = orderByNodeDegree(rbd);       
 
     //
     // Now have the ordered list of targets we are going to display.
     // Build target->row maps and the inverse:
     //
     
-    (new DefaultLayout()).installNodeOrder(targets, rbd, monitor);
+    (new DefaultLayout()).installNodeOrder(targets, rbd);
     return (targets);
   }
   
 
   /***************************************************************************
   **
-  ** Get the ordering of nodes by node degree:
+  ** Relayout the network!
   */
   
-  private List<NID.WithName> orderByNodeDegree(BioFabricNetwork.RelayoutBuildData rbd, 
-  		                                         BTProgressMonitor monitor) throws AsynchExitRequestException {
+  public List<NID.WithName> orderByNodeDegree(BioFabricNetwork.RelayoutBuildData rbd) {
     
-    HashSet<NID.WithName> nodesToGo = new HashSet<NID.WithName>(rbd.allNodeIDs);
-    
-    // Build map of sources to targets, also record in and out degrees of each node:
-    linksToSources(rbd.allNodeIDs, rbd.allLinks, monitor);
-    
-    List<NID.WithName> placeList = extractRoots(monitor);
+    HashSet<NID.WithName> nodesToGo = new HashSet<NID.WithName>(rbd.allNodeIDs);      
+    linksToSources(rbd.allNodeIDs, rbd.allLinks);
+    List<NID.WithName> placeList = extractRoots();
     addToPlaceList(placeList);
     nodesToGo.removeAll(placeList);
     
     //
     // Find the guys whose cites have already been placed and place them:
     //
-  
-    LoopReporter lr = new LoopReporter(nodesToGo.size(), 20, monitor, 0.0, 1.0, "progress.findingCandidates");
     
-    while (!nodesToGo.isEmpty()) {
+    while (!nodesToGo.isEmpty()) {     
       List<NID.WithName> nextBatch = findNextCandidates();
-      lr.report(nextBatch.size());
       addToPlaceList(nextBatch);
       nodesToGo.removeAll(nextBatch);
     }
-    lr.finish();
     
     return (placeList_);
     
@@ -183,44 +151,24 @@ public class HierDAGLayout {
   
   /***************************************************************************
   ** 
-  ** Construct a map of the targets of each node. Note that instance members
+  ** Build the set of guys we are looking at and degrees
   */
 
-  private void linksToSources(Set<NID.WithName> nodeList, Set<FabricLink> linkList,
-  		                        BTProgressMonitor monitor) throws AsynchExitRequestException {
-    
-  	//
-  	// For each node, we initialize a map of nodes it is pointing at, and initialize the inDegree and outDegree
-  	// entries for it as well:
-  	//
-  	
-  	LoopReporter lr = new LoopReporter(nodeList.size(), 20, monitor, 0.0, 1.0, "progress.hDagLayoutInit");
-  	
+  public Map<NID.WithName, Set<NID.WithName>> linksToSources(Set<NID.WithName> nodeList, Set<FabricLink> linkList) {   
+      
     Iterator<NID.WithName> nit = nodeList.iterator();
     while (nit.hasNext()) {
       NID.WithName node = nit.next();
-      lr.report();
       l2s_.put(node, new HashSet<NID.WithName>());
       inDegs_.put(node, Integer.valueOf(0));
       outDegs_.put(node, Integer.valueOf(0));
     } 
     
-    //
-    // Crank thru the links, accumulate degrees and targets
-    //
-    
-    LoopReporter lr2 = new LoopReporter(linkList.size(), 20, monitor, 0.0, 1.0, "progress.hDagDegAndTargs");
-    
     Iterator<FabricLink> llit = linkList.iterator();
     while (llit.hasNext()) {
       FabricLink link = llit.next();
-      lr2.report();
-      //
-      // By default, layout designed to have links point up. Quick way to switch this
-      // is to reverse semantics of source and target:
-      //
-      NID.WithName src = (pointUp_) ? link.getSrcID() : link.getTrgID();
-      NID.WithName trg = (pointUp_) ? link.getTrgID() : link.getSrcID();
+      NID.WithName src = link.getSrcID();
+      NID.WithName trg = link.getTrgID();
       Set<NID.WithName> toTarg = l2s_.get(src);
       toTarg.add(trg);
       Integer deg = outDegs_.get(src);
@@ -228,7 +176,7 @@ public class HierDAGLayout {
       deg = inDegs_.get(trg);
       inDegs_.put(trg, Integer.valueOf(deg.intValue() + 1)); 
     } 
-    return;
+    return (l2s_);
   }
   
   /***************************************************************************
@@ -236,12 +184,8 @@ public class HierDAGLayout {
   ** Add to list to place
   */
 
-  public void addToPlaceList(List<NID.WithName> nextBatch) {
-    int nextRow = placeList_.size();
-    for (NID.WithName nextNode : nextBatch) {
-      placeList_.add(nextNode);
-      nameToRow_.put(nextNode, Integer.valueOf(nextRow++));
-    }
+  public void addToPlaceList(List<NID.WithName> nextBatch) {         
+    placeList_.addAll(nextBatch);
     return;
   }
   
@@ -250,29 +194,22 @@ public class HierDAGLayout {
   ** Extract the root nodes in order from highest degree to low
   */
 
-  public List<NID.WithName> extractRoots(BTProgressMonitor monitor) throws AsynchExitRequestException {
+  public List<NID.WithName> extractRoots() {
  
-    LoopReporter lr = new LoopReporter(l2s_.size(), 20, monitor, 0.0, 1.0, "progress.rootExtractPass1");
-    
     Map<NID.WithName, Integer> roots = new HashMap<NID.WithName, Integer>();
       
     Iterator<NID.WithName> lit = l2s_.keySet().iterator();
     while (lit.hasNext()) {
       NID.WithName node = lit.next();
-      lr.report();
       Set<NID.WithName> fn = l2s_.get(node);
       if (fn.isEmpty()) {
         roots.put(node, Integer.valueOf(0));
       }
-    }
-    lr.finish();
+    } 
     
-    
-    LoopReporter lr2 = new LoopReporter(l2s_.size(), 20, monitor, 0.0, 1.0, "progress.rootExtractPass2");
     lit = l2s_.keySet().iterator();
     while (lit.hasNext()) {
       NID.WithName node = lit.next();
-      lr2.report();
       Set<NID.WithName> fn = l2s_.get(node);
       Iterator<NID.WithName> sit = fn.iterator();
       while (sit.hasNext()) {
@@ -282,26 +219,25 @@ public class HierDAGLayout {
           roots.put(trg, Integer.valueOf(rs.intValue() + 1));          
         }
       }
-    }
-    lr2.finish();
+    } 
     
     ArrayList<NID.WithName> buildList = new ArrayList<NID.WithName>();
     
-    LoopReporter lr3 = new LoopReporter(roots.size(), 20, monitor, 0.0, 1.0, "progress.rootExtractPass3");
     int count = 1;
-    TreeSet<NID.WithName> alpha = new TreeSet<NID.WithName>(Collections.reverseOrder());
-    alpha.addAll(roots.keySet());
     while (buildList.size() < roots.size()) {
-      for (NID.WithName node : alpha) {
+      TreeSet<NID.WithName> alpha = new TreeSet<NID.WithName>(Collections.reverseOrder());
+      alpha.addAll(roots.keySet());
+      Iterator<NID.WithName> rit = alpha.iterator();
+      while (rit.hasNext()) {
+        NID.WithName node = rit.next();
         Integer val = roots.get(node);
         if (val.intValue() == count) {
           buildList.add(node);
-          lr3.report();
         }
       }
       count++;
     }
-    lr3.finish();
+  
     Collections.reverse(buildList);
     return (buildList);
   }
@@ -315,7 +251,8 @@ public class HierDAGLayout {
  
     HashSet<NID.WithName> quickie = new HashSet<NID.WithName>(placeList_);
      
-    ArrayList<GraphSearcher.SourcedNode> nextOutList = new ArrayList<GraphSearcher.SourcedNode>();
+    TreeSet<SourcedNode> nextOut = new TreeSet<SourcedNode>(Collections.reverseOrder());
+    
     Iterator<NID.WithName> lit = l2s_.keySet().iterator();
     while (lit.hasNext()) {
       NID.WithName node = lit.next();
@@ -333,25 +270,120 @@ public class HierDAGLayout {
         }
       }
       if (allThere) {
-        nextOutList.add(new GraphSearcher.SourcedNode(node, inDegs_, nameToRow_, l2s_));
+        nextOut.add(new SourcedNode(node));
       }
-    }
-    
-    //
-    // Order the nodes:
-    //
-    
-    TreeSet<GraphSearcher.SourcedNode> nextOut = new TreeSet<GraphSearcher.SourcedNode>(Collections.reverseOrder());
-    nextOut.addAll(nextOutList);
-    
-    //
-    // Make them a list:
-    //
-   
+    } 
+  
     ArrayList<NID.WithName> retval = new ArrayList<NID.WithName>();
-    for (GraphSearcher.SourcedNode sn : nextOut) {
+    Iterator<SourcedNode> noit = nextOut.iterator();
+    while (noit.hasNext()) {
+      SourcedNode sn = noit.next();
       retval.add(sn.getNode());
     }
     return (retval);
+  }
+
+  ////////////////////////////////////////////////////////////////////////////
+  //
+  // PUBLIC STATIC METHODS
+  //
+  ////////////////////////////////////////////////////////////////////////////
+  
+  /****************************************************************************
+  **
+  ** A Class
+  */
+  
+  public class SourcedNode implements Comparable<SourcedNode> {
+    
+    private NID.WithName node_;
+
+    
+    public SourcedNode(NID.WithName node) {
+      node_ = node;
+    }
+    
+    public NID.WithName getNode() {
+      return (node_);
+    }
+    
+    @Override
+    public int hashCode() {
+      return (node_.hashCode());
+    }
+  
+    @Override
+    public String toString() {
+      return (" node = " + node_);
+    }
+    
+    @Override
+    public boolean equals(Object other) {
+      if (!(other instanceof SourcedNode)) {
+        return (false);
+      }
+      SourcedNode otherDeg = (SourcedNode)other;    
+      return ((this.node_ == null) ? (otherDeg.node_ == null) : this.node_.equals(otherDeg.node_));
+    }
+    
+    public int compareTo(SourcedNode otherDeg) {
+      
+      //
+      // Same name, same node:
+      //
+      
+      if (this.node_.equals(otherDeg.node_)) {
+        return (0);
+      }
+      
+      Set<NID.WithName> mySet = l2s_.get(this.node_);
+      Set<NID.WithName> hisSet = l2s_.get(otherDeg.node_);
+      
+      TreeSet<Integer> myOrder = new TreeSet<Integer>(); 
+      TreeSet<Integer> hisOrder = new TreeSet<Integer>(); 
+      int numNode = placeList_.size();
+      for (int i = 0; i < numNode; i++) {
+        NID.WithName node = placeList_.get(i);
+        if (mySet.contains(node)) {
+          myOrder.add(new Integer(i));
+        }
+        if (hisSet.contains(node)) {
+          hisOrder.add(new Integer(i));
+        }
+      } 
+      
+      ArrayList<Integer> myList = new ArrayList<Integer>(myOrder);
+      ArrayList<Integer> hisList = new ArrayList<Integer>(hisOrder);
+      
+      
+      int mySize = myOrder.size();
+      int hisSize = hisOrder.size();
+      int min = Math.min(mySize, hisSize);
+      for (int i = 0; i < min; i++) {
+        int myVal = myList.get(i).intValue();
+        int hisVal = hisList.get(i).intValue();
+        int diff = hisVal - myVal;
+        if (diff != 0) {
+          return (diff);
+        }
+      }
+      
+      int diffSize = hisSize - mySize;
+      if (diffSize != 0) {
+        return (diffSize);
+      }
+      
+      int myIn = inDegs_.get(this.node_);
+      int hisIn = inDegs_.get(otherDeg.node_);
+      int diffIn = myIn - hisIn;
+      if (diffIn != 0) {
+        return (diffIn);
+      }
+      
+      if (this.node_ == null) {
+        return ((otherDeg.node_ == null) ? 0 : -1);
+      }
+      return (this.node_.compareTo(otherDeg.node_));
+    } 
   }
 }

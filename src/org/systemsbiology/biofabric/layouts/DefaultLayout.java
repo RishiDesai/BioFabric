@@ -35,9 +35,7 @@ import org.systemsbiology.biofabric.model.BioFabricNetwork;
 import org.systemsbiology.biofabric.model.FabricLink;
 import org.systemsbiology.biofabric.util.AsynchExitRequestException;
 import org.systemsbiology.biofabric.util.BTProgressMonitor;
-import org.systemsbiology.biofabric.util.LoopReporter;
 import org.systemsbiology.biofabric.util.NID;
-import org.systemsbiology.biofabric.util.UiUtil;
 
 /****************************************************************************
 **
@@ -75,25 +73,15 @@ public class DefaultLayout {
   
   /***************************************************************************
   **
-  ** Find out if the necessary conditions for this layout are met. This layout handles
-  ** anything.
-  */
-   
-  public boolean criteriaMet(BioFabricNetwork.RelayoutBuildData rbd,
-                             BTProgressMonitor monitor) throws AsynchExitRequestException, 
-                                                               LayoutCriterionFailureException {
-    return (true);
-  }
-
-  /***************************************************************************
-  **
   ** Relayout the network!
   */
   
   public void doLayout(BioFabricNetwork.RelayoutBuildData rbd, NodeSimilarityLayout.CRParams params,
-  		  		           BTProgressMonitor monitor) throws AsynchExitRequestException {
-    doNodeLayout(rbd, ((Params)params).startNodes, monitor);
-    (new DefaultEdgeLayout()).layoutEdges(rbd, monitor);
+  		  		           BTProgressMonitor monitor, 
+                       double startFrac, 
+                       double endFrac) throws AsynchExitRequestException { 
+    doNodeLayout(rbd, ((Params)params).startNodes);
+    (new DefaultEdgeLayout()).layoutEdges(rbd, monitor, startFrac, endFrac);
     return;
   }
   
@@ -102,18 +90,16 @@ public class DefaultLayout {
   ** Relayout the network!
   */
   
-  public List<NID.WithName> doNodeLayout(BioFabricNetwork.RelayoutBuildData rbd, 
-  		                                   List<NID.WithName> startNodeIDs,
-  		                                   BTProgressMonitor monitor) throws AsynchExitRequestException { 
+  public List<NID.WithName> doNodeLayout(BioFabricNetwork.RelayoutBuildData rbd, List<NID.WithName> startNodeIDs) {
   	
-    List<NID.WithName> targetIDs = defaultNodeOrder(rbd.allLinks, rbd.loneNodeIDs, startNodeIDs, monitor);       
+    List<NID.WithName> targetIDs = defaultNodeOrder(rbd.allLinks, rbd.loneNodeIDs, startNodeIDs);       
 
     //
     // Now have the ordered list of targets we are going to display.
     // Build target->row maps and the inverse:
     //
     
-    installNodeOrder(targetIDs, rbd, monitor);
+    installNodeOrder(targetIDs, rbd);
     return (targetIDs);
   }
   
@@ -122,21 +108,17 @@ public class DefaultLayout {
   ** Install node orders
   */
   
-  public void installNodeOrder(List<NID.WithName> targetIDs, BioFabricNetwork.RelayoutBuildData rbd, 
-  		                         BTProgressMonitor monitor) throws AsynchExitRequestException {
+  public void installNodeOrder(List<NID.WithName> targetIDs, BioFabricNetwork.RelayoutBuildData rbd) {
+  
     int currRow = 0;
-    LoopReporter lr = new LoopReporter(targetIDs.size(), 20, monitor, 0.0, 1.0, "progress.installOrdering");
-    
     HashMap<NID.WithName, Integer> nodeOrder = new HashMap<NID.WithName, Integer>();
     Iterator<NID.WithName> trit = targetIDs.iterator();
     while (trit.hasNext()) {
-      NID.WithName target = trit.next();
-      lr.report();
+      NID.WithName target = trit.next();   
       Integer rowTag = Integer.valueOf(currRow++);
       nodeOrder.put(target, rowTag);
     }  
     rbd.setNodeOrder(nodeOrder);
-    lr.finish();
     return;
   }
 
@@ -146,9 +128,7 @@ public class DefaultLayout {
   */
 
   public List<NID.WithName> defaultNodeOrder(Set<FabricLink> allLinks,
-  		                                       Set<NID.WithName> loneNodes, 
-  		                                       List<NID.WithName> startNodes, 
-  		                                       BTProgressMonitor monitor) throws AsynchExitRequestException { 
+  		                                       Set<NID.WithName> loneNodes, List<NID.WithName> startNodes) {    
     //
     // Note the allLinks Set has pruned out duplicates and synonymous non-directional links
     //
@@ -163,14 +143,9 @@ public class DefaultLayout {
     ArrayList<NID.WithName> targets = new ArrayList<NID.WithName>();
          
     HashSet<NID.WithName> targsToGo = new HashSet<NID.WithName>();
-    
-    int numLink = allLinks.size();
-    LoopReporter lr = new LoopReporter(numLink, 20, monitor, 0.0, 0.25, "progress.calculateNodeDegree");
-    
     Iterator<FabricLink> alit = allLinks.iterator();
     while (alit.hasNext()) {
       FabricLink nextLink = alit.next();
-      lr.report();
       NID.WithName sidwn = nextLink.getSrcID();
       NID.WithName tidwn = nextLink.getTrgID();
       Set<NID.WithName> targs = targsPerSource.get(sidwn);
@@ -192,19 +167,15 @@ public class DefaultLayout {
       Integer trgCount = linkCounts.get(tidwn);
       linkCounts.put(tidwn, (trgCount == null) ? Integer.valueOf(1) : Integer.valueOf(trgCount.intValue() + 1));
     }
-    lr.finish();
     
     //
     // Rank the nodes by link count:
     //
     
-    lr = new LoopReporter(linkCounts.size(), 20, monitor, 0.25, 0.50, "progress.rankByDegree");
-    
     TreeMap<Integer, SortedSet<NID.WithName>> countRank = new TreeMap<Integer, SortedSet<NID.WithName>>(Collections.reverseOrder());
     Iterator<NID.WithName> lcit = linkCounts.keySet().iterator();
     while (lcit.hasNext()) {
       NID.WithName src = lcit.next();
-      lr.report();
       Integer count = linkCounts.get(src);
       SortedSet<NID.WithName> perCount = countRank.get(count);
       if (perCount == null) {
@@ -213,7 +184,6 @@ public class DefaultLayout {
       }
       perCount.add(src);
     }
-    lr.finish();
     
     //
     // Handle the specified starting nodes case:
@@ -224,7 +194,7 @@ public class DefaultLayout {
       targsToGo.removeAll(startNodes);
       targets.addAll(startNodes);
       queue.addAll(startNodes);
-      flushQueue(targets, targsPerSource, linkCounts, targsToGo, queue, monitor, 0.50, 0.75);
+      flushQueue(targets, targsPerSource, linkCounts, targsToGo, queue);
     }   
     
     //
@@ -244,7 +214,7 @@ public class DefaultLayout {
             ArrayList<NID.WithName> queue = new ArrayList<NID.WithName>();
             targsToGo.remove(node);
             targets.add(node);
-            addMyKidsNR(targets, targsPerSource, linkCounts, targsToGo, node, queue, monitor, 0.75, 1.0);
+            addMyKidsNR(targets, targsPerSource, linkCounts, targsToGo, node, queue);
           }
         }
       }
@@ -257,10 +227,7 @@ public class DefaultLayout {
     //
     
     HashSet<NID.WithName> remains = new HashSet<NID.WithName>(loneNodes);
-    // GOES AWAY IF remains 190804 targets 281832
-    System.err.println("remains " + remains.size() + " targets " + targets.size());
     remains.removeAll(targets);
-    System.err.println("remains now " + remains.size());
     targets.addAll(new TreeSet<NID.WithName>(remains));
     return (targets);
   }
@@ -312,11 +279,9 @@ public class DefaultLayout {
   
   private void addMyKidsNR(List<NID.WithName> targets, Map<NID.WithName, Set<NID.WithName>> targsPerSource, 
                            Map<NID.WithName, Integer> linkCounts, 
-                           Set<NID.WithName> targsToGo, NID.WithName node, List<NID.WithName> queue,
-                           BTProgressMonitor monitor, double startFrac, double endFrac) 
-                          	 throws AsynchExitRequestException {
+                           Set<NID.WithName> targsToGo, NID.WithName node, List<NID.WithName> queue) {
     queue.add(node);
-    flushQueue(targets, targsPerSource, linkCounts, targsToGo, queue, monitor, startFrac, endFrac);
+    flushQueue(targets, targsPerSource, linkCounts, targsToGo, queue);
     return;
   }
   
@@ -328,17 +293,9 @@ public class DefaultLayout {
   private void flushQueue(List<NID.WithName> targets, 
   		                    Map<NID.WithName, Set<NID.WithName>> targsPerSource, 
                           Map<NID.WithName, Integer> linkCounts, 
-                          Set<NID.WithName> targsToGo, List<NID.WithName> queue, 
-                          BTProgressMonitor monitor, double startFrac, double endFrac) 
-                            throws AsynchExitRequestException {
-  	
-  	LoopReporter lr = new LoopReporter(targsToGo.size(), 20, monitor, startFrac, endFrac, "progress.nodeOrdering");
-  	int lastSize = targsToGo.size();	
+                          Set<NID.WithName> targsToGo, List<NID.WithName> queue) {
     while (!queue.isEmpty()) {
       NID.WithName node = queue.remove(0);
-      int ttgSize = targsToGo.size();
-      lr.report(lastSize - ttgSize);
-      lastSize = ttgSize;
       List<NID.WithName> myKids = orderMyKids(targsPerSource, linkCounts, targsToGo, node);
       Iterator<NID.WithName> ktpit = myKids.iterator(); 
       while (ktpit.hasNext()) {  
@@ -350,7 +307,6 @@ public class DefaultLayout {
         }
       }
     }
-    lr.finish();
     return;
   }
 

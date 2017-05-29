@@ -1,5 +1,5 @@
 /*
-**    Copyright (C) 2003-2017 Institute for Systems Biology 
+**    Copyright (C) 2003-2016 Institute for Systems Biology 
 **                            Seattle, Washington, USA. 
 **
 **    This library is free software; you can redistribute it and/or
@@ -31,10 +31,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.systemsbiology.biofabric.model.FabricLink;
-import org.systemsbiology.biofabric.util.AsynchExitRequestException;
-import org.systemsbiology.biofabric.util.BTProgressMonitor;
 import org.systemsbiology.biofabric.util.DataUtil;
-import org.systemsbiology.biofabric.util.LoopReporter;
 import org.systemsbiology.biofabric.util.NID;
 import org.systemsbiology.biofabric.util.UniqueLabeller;
 
@@ -91,49 +88,34 @@ public class FabricSIFLoader {
   */
 
   public SIFStats readSIF(File infile, UniqueLabeller idGen, List<FabricLink> links, 
-  		                    Set<NID.WithName> loneNodeIDs, Map<String, String> nameMap, Integer magBins, 
-  		                    BTProgressMonitor monitor) throws AsynchExitRequestException, IOException { 
-
-  	SIFStats retval = new SIFStats();
-    long fileLen = infile.length();
+  		                    Set<NID.WithName> loneNodeIDs, Map<String, String> nameMap, Integer magBins) throws IOException { 
+    SIFStats retval = new SIFStats();
     HashMap<String, NID.WithName> nameToID = new HashMap<String, NID.WithName>();
-    BufferedReader in = null;
+    BufferedReader in = new BufferedReader(new InputStreamReader(new FileInputStream(infile), "UTF-8"));
     ArrayList<String[]> tokSets = new ArrayList<String[]>();
-    LoopReporter lr = new LoopReporter(fileLen, 20, monitor, 0.0, 1.0, "progress.readingFile");   
-    try {
-	    in = new BufferedReader(new InputStreamReader(new FileInputStream(infile), "UTF-8")); 
-	    String line = null;
-	    while ((line = in.readLine()) != null) {
-	      lr.report(line.length() + 1);
-	    	if (line.trim().equals("")) {
-	    		continue;
-	    	}
-	      String[] tokens = line.split("\\t");
-	      if ((tokens.length == 1) && (line.indexOf("\\t") == -1)) {
-	        tokens = line.split(" ");
-	      }
-	      if (tokens.length == 0) {
-	        continue;
-	      } else if ((tokens.length == 2) || (tokens.length > 3)) {
-	        retval.badLines.add(line);
-	        continue;
-	      } else {        
-	        tokSets.add(tokens);
-	      }
-	    }
-    } finally {
-    	if (in != null) {
-        in.close();
+    String line = null;
+    while ((line = in.readLine()) != null) {
+    	if (line.trim().equals("")) {
+    		continue;
     	}
+      String[] tokens = line.split("\\t");
+      if ((tokens.length == 1) && (line.indexOf("\\t") == -1)) {
+        tokens = line.split(" ");
+      }
+      if (tokens.length == 0) {
+        continue;
+      } else if ((tokens.length == 2) || (tokens.length > 3)) {
+        retval.badLines.add(line);
+        continue;
+      } else {        
+        tokSets.add(tokens);
+      }
     }
-    lr.finish();
+    in.close();
     
-    int numLines = tokSets.size();
-    lr = new LoopReporter(numLines, 20, monitor, 0.0, 1.0, "progress.buildingEdgesAndNodes");
-    
+    int numLines = tokSets.size();  
     for (int i = 0; i < numLines; i++) {
       String[] tokens = tokSets.get(i);
-      lr.report();
       if (tokens.length == 3) {
         String source = tokens[0].trim();
         if ((source.indexOf("\"") == 0) && (source.lastIndexOf("\"") == (source.length() - 1))) {
@@ -210,14 +192,12 @@ public class FabricSIFLoader {
         NID.WithName loneID = nameToID.get(normLoner);
         if (loneID == null) {
         	NID loneNID = idGen.getNextOID();
-        	loneID = new NID.WithName(loneNID, loner);
-        	nameToID.put(normLoner, loneID);
+        	NID.WithName lwn = new NID.WithName(loneNID, loner);
+        	nameToID.put(normLoner, lwn);
         }
-        loneNodeIDs.add(loneID); 
-        System.err.println("new lone " + loneID);
+        loneNodeIDs.add(loneID);       
       }
     }
-    lr.finish();
     return (retval);
   }
 

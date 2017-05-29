@@ -37,7 +37,6 @@ import org.systemsbiology.biofabric.ui.FabricDisplayOptionsManager;
 import org.systemsbiology.biofabric.ui.display.BioFabricPanel;
 import org.systemsbiology.biofabric.util.AsynchExitRequestException;
 import org.systemsbiology.biofabric.util.BTProgressMonitor;
-import org.systemsbiology.biofabric.util.LoopReporter;
 import org.systemsbiology.biofabric.util.QuadTree;
 import org.systemsbiology.biofabric.util.UiUtil;
 
@@ -78,6 +77,10 @@ public class BufferBuilder {
   // PRIVATE INSTANCE MEMBERS
   //
   ////////////////////////////////////////////////////////////////////////////
+   
+  //
+  // For mapping of selections:
+  //
   
   private RasterCache cache_;
   private HashMap<Rectangle2D, WorldPieceOffering> allWorldsToImageName_;
@@ -90,7 +93,7 @@ public class BufferBuilder {
   private BufferBuilderClient bbc_;
   private boolean timeToExit_;
   private BuildImageWorker biw_;
-  private ImgAndBufPool bis_;
+  private BufImgStack bis_;
 
   
   ////////////////////////////////////////////////////////////////////////////
@@ -105,7 +108,7 @@ public class BufferBuilder {
   */
 
   public BufferBuilder(String cachePref, int maxMeg, BufBuildDrawer drawRender, 
-  		                 BufBuildDrawer binRender, ImgAndBufPool bis) {
+  		                 BufBuildDrawer binRender, BufImgStack bis) {
     cache_ = new RasterCache(cachePref, maxMeg);
     allWorldsToImageName_ = new HashMap<Rectangle2D, WorldPieceOffering>();
     findWorldsQT_ = null;
@@ -121,14 +124,13 @@ public class BufferBuilder {
   ** Constructor
   */
 
-  public BufferBuilder(BufBuildDrawer drawRender, BufBuildDrawer binRender, ImgAndBufPool bis) {
+  public BufferBuilder(BufBuildDrawer drawRender, BufBuildDrawer binRender) {
     drawRender_ = drawRender;
     binRender_ = binRender;
     allWorldsToImageName_ = new HashMap<Rectangle2D, WorldPieceOffering>();
     findWorldsQT_ = null;
     bbc_ = null;
     timeToExit_ = false;
-    bis_ = bis;
   }
 
   ////////////////////////////////////////////////////////////////////////////
@@ -148,10 +150,6 @@ public class BufferBuilder {
       bbc_ = null;
       this.notify();
     }
-    if (findWorldsQT_ != null) {
-    	findWorldsQT_.clear();
-    }
-    cache_.releaseResources();
     return;
   }
   
@@ -165,12 +163,6 @@ public class BufferBuilder {
     worldRect_ = new Rectangle2D.Double();
     binRender_.dimsForBuf(screenDim_, worldRect_); // Both will give same answer... 
     Rectangle worldPiece = UiUtil.rectFromRect2D(worldRect_);
-    UiUtil.fixMePrintout("Saw NPE here after recolor operation. Appears to be event-driven on non-main window");
-    UiUtil.fixMePrintout("Saw NPE here after non-main window was launched");
-    System.out.println(bis_ + " " + screenDim_);
-    if (bis_ == null) {
-    	System.out.println(bis_ + " " + screenDim_);
-    }
     BufferedImage bi = bis_.fetchImage(screenDim_.width, screenDim_.height, BufferedImage.TYPE_3BYTE_BGR);
     double lpp = linksPerPix(screenDim_, worldPiece);
     BufBuildDrawer useDrawer = (lpp < TRANSITION_LPP_) ? drawRender_ : binRender_;
@@ -201,25 +193,29 @@ public class BufferBuilder {
   */
   
   public BufferedImage buildBufs(int[] zooms, BufferBuilderClient bbc, int maxSize, 
-  		                           BTProgressMonitor monitor) throws IOException, AsynchExitRequestException {
+  		                           BTProgressMonitor monitor, 
+                                 double startFrac, 
+                                 double endFrac) throws IOException, AsynchExitRequestException {
     timeToExit_ = false;
     bbZooms_ = new int[zooms.length];
     System.arraycopy(zooms, 0, bbZooms_, 0, zooms.length);
     screenDim_ = new Dimension();
     worldRect_ = new Rectangle2D.Double();
     drawRender_.dimsForBuf(screenDim_, worldRect_); // These values are now ours
-    Rectangle worldPiece = UiUtil.rectFromRect2D(worldRect_);   
+    Rectangle worldPiece = UiUtil.rectFromRect2D(worldRect_);
+     
+    double inc = (endFrac - startFrac) / ((zooms.length == 0) ? 1 : zooms.length);
+    double currProg = startFrac;
+    
     findWorldsQT_ = new QuadTree(worldPiece, zooms.length);
          
     //
     // Build the first two zoom levels before we even get started:
     //
     
-    List<QueueRequest> requestQueuePre = buildQueue(0, 1, 10); 
-    LoopReporter lr = new LoopReporter(requestQueuePre.size(), 20, monitor, 0.0, 1.0, "progress.stockingImageBufferTop");
+    List<QueueRequest> requestQueuePre = buildQueue(0, 1, 10);   
     while (!requestQueuePre.isEmpty()) {
       QueueRequest qr = requestQueuePre.remove(0);
-      lr.report();
       buildBuffer(new Dimension(qr.imageDim.width, qr.imageDim.height), qr);
     }
     
@@ -227,8 +223,7 @@ public class BufferBuilder {
     // Now build up the requests for the background thread:
     //   
     
-    int useMax = 1; //maxSize; 
-    List<QueueRequest> requestQueue = (zooms.length > 2) ? buildQueue(2, zooms.length - 1, useMax) : new ArrayList<QueueRequest>();
+    List<QueueRequest> requestQueue = (zooms.length > 2) ? buildQueue(2, zooms.length - 1, maxSize) : new ArrayList<QueueRequest>();
  
     bbc_ = bbc;
  
@@ -238,7 +233,7 @@ public class BufferBuilder {
       runThread.setPriority(runThread.getPriority() - 2);
       runThread.start();
     }
-
+    Runtime.getRuntime().gc();
     return (getTopImage()); 
   }
 
@@ -254,13 +249,7 @@ public class BufferBuilder {
   		throw new IOException();
   	}
     WorldPieceOffering wpo = allWorldsToImageName_.get(nodes.get(0).getWorldExtent());
-    if (wpo == null) { // After a new network is created....
-    	return (null);
-    }
     BufferedImage retval = null;
-    System.err.println("wpo is " + wpo);
-    System.err.println("cache is " + cache_);
-    
     //
     // It is true there are two locks floating around, one on this object, and one of the
     // bis_ BufImgStack. But since bis_ does not acquire any locks during its methods, we
@@ -314,17 +303,12 @@ public class BufferBuilder {
     ArrayList<QueueRequest> retval = new ArrayList<QueueRequest>();
     ArrayList<QuadTree.QuadTreeNode> nodes = new ArrayList<QuadTree.QuadTreeNode>();
     findWorldsQT_.getAllNodesToDepth(startIndex, endIndex, nodes);
-    Rectangle2D emptyExtent = new Rectangle2D.Double(0.0, 0.0, 0.0, 0.0);
     int numWorlds = nodes.size();
     for (int i = 0; i < numWorlds; i++) {
     	QuadTree.QuadTreeNode node = nodes.get(i);
     	Rectangle2D worldExtent = node.getWorldExtent();
-    	if (worldExtent.equals(emptyExtent)) { // This is an empty model...
-    		continue;
-    	}
       WorldPieceOffering wpo = allWorldsToImageName_.get(worldExtent);
       if (wpo != null) {
-      	UiUtil.fixMePrintout("Cancel of relayout puts us here");
       	System.err.println("Dup " + worldExtent);
       	throw new IllegalStateException();
       }

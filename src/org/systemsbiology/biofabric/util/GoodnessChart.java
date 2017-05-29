@@ -1,5 +1,5 @@
 /*
-**    Copyright (C) 2003-2017 Institute for Systems Biology 
+**    Copyright (C) 2003-2012 Institute for Systems Biology 
 **                            Seattle, Washington, USA. 
 **
 **    This library is free software; you can redistribute it and/or
@@ -59,9 +59,7 @@ public class GoodnessChart extends JPanel {
   //
   ////////////////////////////////////////////////////////////////////////////
    
-  private SortedMap<Integer, Double> progress_;
-  
-  private static final long serialVersionUID = 1L;
+  private SortedMap progress_;
 
   ////////////////////////////////////////////////////////////////////////////
   //
@@ -89,7 +87,6 @@ public class GoodnessChart extends JPanel {
   ** Get the minimum size
   */
   
-  @Override
   public Dimension getMinimumSize() {
     return (getPreferredSize());
   }  
@@ -99,7 +96,6 @@ public class GoodnessChart extends JPanel {
   ** Get the preferred size
   */
   
-  @Override
   public Dimension getPreferredSize() {
     return (new Dimension(200, 200));
   }
@@ -109,7 +105,7 @@ public class GoodnessChart extends JPanel {
   ** Set Progress
   */
 
-  public void setProgress(SortedMap<Integer, Double> progress) {
+  public void setProgress(SortedMap progress) {
     progress_ = progress;
     return;
   }   
@@ -119,7 +115,6 @@ public class GoodnessChart extends JPanel {
   ** Set bounds
   */
 
-  @Override
   public void setBounds(int x, int y, int width, int height) {
     super.setBounds(x, y, width, height);
     repaint();
@@ -131,7 +126,6 @@ public class GoodnessChart extends JPanel {
   ** Paint
   */
 
-  @Override
   public void paintComponent(Graphics g) {
     super.paintComponent(g);
     Graphics2D g2 = (Graphics2D)g;
@@ -162,22 +156,22 @@ public class GoodnessChart extends JPanel {
     DoubMinMax dmm = new DoubMinMax();
     dmm.inverseInit();
     int numProg = progress_.size();
-    Iterator<Integer> pit = progress_.keySet().iterator();
+    Iterator pit = progress_.keySet().iterator();
     while (pit.hasNext()) {
-      Integer key = pit.next();
-      Double val = progress_.get(key);
+      Integer key = (Integer)pit.next();
+      Double val = (Double)progress_.get(key);
       dmm.update(val.doubleValue());
     }
     
     int barsForShow = Math.max(numProg, 10);
     int barWidth = (int)Math.floor((double)screenDim.width / (double)barsForShow);
-    double maxBarHeight = screenDim.height;
+    double maxBarHeight = (double)screenDim.height;
        
     int count = 0;
     pit = progress_.keySet().iterator();
     while (pit.hasNext()) {
-      Integer key = pit.next();
-      Double val = progress_.get(key);
+      Integer key = (Integer)pit.next();
+      Double val = (Double)progress_.get(key);
       int startx = count++ * barWidth;
       int barHeight = (int)Math.round(maxBarHeight * (val.doubleValue() / dmm.max));
       int ul = screenDim.height - (int)Math.round(maxBarHeight * (val.doubleValue() / dmm.max));
@@ -202,10 +196,10 @@ public class GoodnessChart extends JPanel {
   public static void main(String[] argv) {
     GoodnessChart msc = new GoodnessChart();
   
-    TreeMap<Integer, Double> allProgress = new TreeMap<Integer, Double>();
-    allProgress.put(Integer.valueOf(0), Double.valueOf(3024.0));
-    allProgress.put(Integer.valueOf(1), Double.valueOf(2956.0));
-    allProgress.put(Integer.valueOf(2), Double.valueOf(2458.0));
+    TreeMap allProgress = new TreeMap();
+    allProgress.put(new Integer(0), new Double(3024.0));
+    allProgress.put(new Integer(1), new Double(2956.0));
+    allProgress.put(new Integer(2), new Double(2458.0));
     
     msc.setProgress(allProgress);
     
@@ -218,6 +212,6 @@ public class GoodnessChart extends JPanel {
     frame.getContentPane().add(msc);
     frame.pack();
     frame.setSize(new Dimension(400, 300));
-    frame.setVisible(true);
+    frame.show();
   }
 }
