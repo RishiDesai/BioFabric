@@ -319,20 +319,25 @@ public class GWImportLoader extends FabricImportLoader {
         return (true);
       }
       for (int i = 1; i < HEADER_LINES; i++) { // skip next three lines; We assume four header lines
-        in.readLine();
+        line = in.readLine();
+        if (line == null) { // if sif file that has very few lines
+          return (false);
+        }
       }
       line = in.readLine();
-      if (line == null) { // is sif file that has very few lines
+      if (line == null) {
         return (false);
       }
       String[] tok = line.split(" ");
       if (tok.length != 1) {  // should be #nodes here
         return (false);
       }
-      
       int numNodes = Integer.parseInt(tok[0]); // to test if #nodes is in fact integer
       if (numNodes > 0) {
         String aNode = in.readLine();
+        if (aNode == null) {
+          return (false);
+        }
         int len = aNode.length();
         if (len < 4) { // No guarantee there are four characters to substring:
         	return (false);
